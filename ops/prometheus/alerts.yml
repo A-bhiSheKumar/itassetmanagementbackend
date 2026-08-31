@@ -1,0 +1,107 @@
+# Alerts worth waking someone for.
+#
+# Every rule here fires on a SHAPE OVER TIME, which is precisely what a log line
+# cannot tell you: one error is an event, a rising error rate is an incident.
+#
+# The bar for `severity: page` is "a customer is affected and it will not fix
+# itself". Everything else is a ticket. An alert that pages and is routinely
+# ignored trains people to ignore the ones that matter.
+
+groups:
+  - name: itam-api
+    rules:
+      # ── Availability ────────────────────────────────────────────────────
+      - alert: ApiDown
+        expr: up{job="itam-api"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: 'API replica {{ $labels.instance }} is not responding'
+          runbook: 'docs/11-runbooks.md'
+
+      - alert: ReplicaRestartLoop
+        # Uptime repeatedly falling back under two minutes means the process is
+        # dying and being restarted — which a liveness probe hides, because the
+        # replacement passes its check.
+        expr: itam_uptime_seconds < 120
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: 'Replica {{ $labels.instance }} keeps restarting'
+          runbook: 'docs/11-runbooks.md'
+
+      # ── Errors ──────────────────────────────────────────────────────────
+      - alert: ElevatedErrorRate
+        # Only 5xx counts. A 404 or a 403 is the system working, and alerting on
+        # them means alerting on ordinary user behaviour.
+        expr: |
+          sum(rate(itam_request_errors_total[5m]))
+            / clamp_min(sum(rate(itam_requests_total[5m])), 0.001) > 0.02
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: 'Over 2% of requests are returning 5xx'
+          runbook: 'docs/11-runbooks.md'
+
+      - alert: RouteErrorRate
+        # A single broken endpoint can sit well under the global threshold while
+        # being completely unusable for the customers who depend on it.
+        expr: |
+          sum by (route) (rate(itam_request_errors_total[10m]))
+            / clamp_min(sum by (route) (rate(itam_requests_total[10m])), 0.001) > 0.1
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.route }} is failing more than 10% of the time'
+
+      # ── Latency ─────────────────────────────────────────────────────────
+      - alert: SlowRequests
+        # p95, not the mean: the mean hides the tail, and the tail is what people
+        # actually experience. The budget is 300ms (docs/10-production-readiness.md §4).
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(itam_request_duration_ms_bucket[10m]))
+          ) > 300
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'p95 latency is over the 300ms budget'
+
+      # ── Background work ─────────────────────────────────────────────────
+      - alert: QueueBacklogGrowing
+        # Depth alone says nothing — a queue is healthy at 200 if it is draining.
+        # A backlog that is both large and still growing is the real signal.
+        expr: itam_queue_waiting > 100 and deriv(itam_queue_waiting[15m]) > 0
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: 'Queue {{ $labels.queue }} is backing up and not draining'
+
+      - alert: JobsDeadLettering
+        # A dead-lettered job has exhausted its retries. It will not run again,
+        # so whatever it was going to do has silently not happened.
+        expr: increase(itam_events_total{name="jobs_dead_lettered"}[1h]) > 5
+        labels: { severity: ticket }
+        annotations:
+          summary: 'Jobs are exhausting their retries — work is being dropped'
+          runbook: 'docs/11-runbooks.md'
+
+      - alert: DeadLetterQueueNotEmptied
+        # Dead letters accumulate until someone looks. This fires when nobody has.
+        expr: itam_queue_dead_lettered > 20
+        for: 6h
+        labels: { severity: ticket }
+        annotations:
+          summary: '{{ $labels.queue }} has dead letters nobody has cleared'
+
+      # ── Data integrity ──────────────────────────────────────────────────
+      - alert: ReconciliationFindingDrift
+        # The nightly job repairs what it finds, so this is not about the data
+        # being broken now — it is about something writing around the assignment
+        # service, which the repair only treats the symptom of.
+        expr: increase(itam_events_total{name="reconciliation_discrepancies"}[25h]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: 'Reconciliation is finding drift — something writes around the assignment service'
+          runbook: 'docs/11-runbooks.md'

@@ -11,4 +11,5 @@ export {
   setJobQueue,
   type JobQueue,
   type JobHandler,
+  type QueueDepth,
 } from './jobQueue.js';

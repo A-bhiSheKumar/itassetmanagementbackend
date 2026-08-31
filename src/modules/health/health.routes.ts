@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { markPublic } from '../../core/authz/index.js';
+import { asyncHandler } from '../../core/http/index.js';
 import { live, ready, prometheus, summary } from './health.controller.js';
 
 export const healthRoutes = Router();
@@ -19,5 +20,5 @@ healthRoutes.get('/ready', markPublic(), ready);
  * decision (bind the scrape port internally, or deny /metrics at the edge),
  * not something a bearer token would solve for a Prometheus scraper.
  */
-healthRoutes.get('/metrics', markPublic(), prometheus);
+healthRoutes.get('/metrics', markPublic(), asyncHandler(prometheus));
 healthRoutes.get('/summary', markPublic(), summary);

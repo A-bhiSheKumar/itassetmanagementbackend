@@ -69,9 +69,11 @@ Work outward from the data:
 2. **Is an index missing?** Run `npm test -- queryPlans`. It fails on a collection scan.
    Indexes build in the background and a malformed one is only reported on the model's `index`
    event — which is logged as `INDEX BUILD FAILED`. Grep for it.
-3. **Is it one tenant?** Group request durations by `tenantId`. The per-tenant rate limit
-   exists for exactly this, but it is currently in-memory and therefore per-replica (see
-   [10-production-readiness.md](10-production-readiness.md) §3).
+3. **Is it one tenant?** Group request durations by `tenantId`. The per-tenant rate limit exists
+   for exactly this, and its counters are shared across replicas, so the configured limit is the
+   enforced one (see [10-production-readiness.md](10-production-readiness.md) §3). If Redis is
+   unreachable the limiter fails open and logs `Rate-limit store unavailable` — check for that
+   line before concluding the limit is not working.
 4. **Is it the dashboard?** It reads a daily rollup, so it should be tens of milliseconds
    regardless of estate size. If it is slow, the rollup is missing and it is recomputing on
    every load — check the `scheduled` queue.
@@ -89,14 +91,24 @@ Symptoms: the dashboard goes stale, warranty notices stop, imports sit at `commi
    scaled the API but not the worker leaves the queue filling with nothing draining.
 2. **Is Redis reachable?** In production an unreachable Redis is a fatal boot error, so a
    worker that will not start is a strong signal.
-3. **Check queue depth:**
+3. **Check queue depth** — exported per queue, so this is a graph rather than a guess:
+   ```
+   curl -s localhost:3000/api/v1/health/metrics | grep itam_queue_
+   ```
+   Depth alone proves nothing: a queue is healthy at 200 if it is draining and broken at 20 if
+   it is not. Compare two scrapes a minute apart, or look at `QueueBacklogGrowing`, which fires
+   only when depth is both high and still climbing.
+
+   Straight from Redis, if the API is the thing that is down:
    ```
    redis-cli llen bull:imports:wait
    redis-cli zcard bull:scheduled:delayed
    redis-cli zcard bull:imports:failed
    ```
-4. **Dead-lettered jobs** are logged as `Job dead-lettered` after five attempts. They need a
-   human — that is the point of the limit.
+4. **Dead-lettered jobs** are logged as `Job dead-lettered` after five attempts, counted as
+   `itam_events_total{name="jobs_dead_lettered"}`, and left in the queue's failed set. They need
+   a human — that is the point of the limit. A dead letter means that work has silently NOT
+   happened, so decide per job whether to replay it or accept the loss.
 
 **Events are recoverable.** Anything a request could not deliver inline stays `pending` in the
 outbox and the worker drains it every five seconds. Nothing is lost by a worker being down for
@@ -165,3 +177,31 @@ release still writes.
 | `409` on assign | Expected — the asset is already assigned. The response names the holder |
 | `402` on create | Plan limit. `GET /tenant/usage` shows exactly where they are |
 | Import rejects everything | Almost always the date order. It is declared, never guessed |
+
+---
+
+## 9. Responding to an alert
+
+Rules live in [ops/prometheus/alerts.yml](../ops/prometheus/alerts.yml). Two severities, and the
+distinction is deliberate: `page` means a customer is affected and it will not fix itself,
+`ticket` means it needs a human this week. An alert that pages and is routinely ignored trains
+people to ignore the ones that matter, so if a paging alert turns out not to meet that bar,
+demote it rather than tolerating it.
+
+| Alert | What it actually means | Start at |
+|---|---|---|
+| `ApiDown` | A replica stopped answering | §2 |
+| `ReplicaRestartLoop` | The process keeps dying; liveness hides it, because the replacement passes its check | §2, then recent deploys |
+| `ElevatedErrorRate` | Over 2% of requests are 5xx. Only 5xx counts — a 403 is the system working | §2 |
+| `RouteErrorRate` | One endpoint is broken while the global rate looks fine | The route named in the label |
+| `SlowRequests` | p95 is over the 300ms budget. The mean hides the tail; the tail is what people feel | §3 |
+| `QueueBacklogGrowing` | A queue is large *and* not draining | §4 |
+| `JobsDeadLettering` | Work is being dropped after exhausting retries | §4 |
+| `DeadLetterQueueNotEmptied` | Dead letters have sat unhandled for six hours | §4 |
+| `ReconciliationFindingDrift` | Something is writing around the assignment service | Below |
+
+**On `ReconciliationFindingDrift`:** the data is already repaired — the nightly job fixes what
+it finds. The alert is not about the data being wrong now, it is that something produced drift
+the application should not be able to produce. Read the logged discrepancies, then look for a
+migration, a script, or a code path writing `currentAssignment` outside the assignment
+transaction. Repairing without finding the writer means it happens again tomorrow.

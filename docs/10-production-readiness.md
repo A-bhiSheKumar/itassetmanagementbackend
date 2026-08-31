@@ -18,7 +18,7 @@ or a measurement behind it), **partial** (built, with a stated limitation), or *
 | Magic-byte validation, tested with a renamed executable | **Verified** | `tests/http/documents.test.ts` — a Mach-O header named `invoice.pdf` is rejected |
 | CSV formula-injection protection on export | **Verified** | `tests/http/imports.test.ts`, and live: `=cmd\|'/c calc'!A1` exports as `'=cmd…` |
 | Refresh-token reuse detection end to end | **Verified** | `auth.test.ts` — a replayed token revokes the whole family |
-| Rate limits, including per-tenant isolation | **Partial** | Three dimensions implemented (IP, user, tenant); **in-memory, so per-replica**. See §3 |
+| Rate limits, including per-tenant isolation | Done | Three dimensions (IP, user, tenant), counters shared across replicas. See §3 |
 | CSP with no `unsafe-inline`, verified in a browser | **Partial** | Header set and asserted in `app.test.ts`; not yet verified in a real browser |
 | No secrets in the repository or the built image | **Verified** | Scanned before the first push; only `.env.example` placeholders |
 | Backup restore rehearsed | **Not done** | Needs a real Atlas cluster. See §5 |
@@ -29,11 +29,12 @@ or a measurement behind it), **partial** (built, with a stated limitation), or *
 
 ## 2. Dependencies
 
-`npm audit` is run below and recorded with the run. Lockfile committed; exact versions pinned
-in `package.json`.
+`npm audit` runs in CI on every push, so a newly disclosed advisory in an unchanged dependency
+fails the next build rather than waiting for someone to think of it. Lockfile committed; exact
+versions pinned in `package.json`.
 
-Not yet wired: Dependabot/Renovate, CodeQL, and secret scanning in CI — there is no CI
-pipeline yet, which is the honest gap. Everything in this document is currently run by hand.
+Still not wired: Dependabot/Renovate, CodeQL, and secret scanning. `npm audit` only reports what
+is already public — it is a floor, not vulnerability management.
 
 ---
 
@@ -131,7 +132,7 @@ the order: profile, then fix.
 | Index build failures surfaced | Done — and it immediately found two silently-missing indexes |
 | Error tracking | Done — Sentry-shaped reporter behind an interface, so the vendor is a config change |
 | Metrics endpoint | Done — `/health/metrics` in Prometheus text format; `/health/summary` for humans |
-| Alerting on error rate, queue depth, DB latency | **Not built.** The metrics exist; nothing scrapes them or pages anyone |
+| Alerting on error rate, latency, queue depth | Rules written ([ops/prometheus/alerts.yml](../ops/prometheus/alerts.yml)) — **nothing runs them yet**, see §8 |
 | CI pipeline | Done — lint, typecheck, tests, `npm audit` and the load test on every push |
 
 Metric labels carry the route **pattern**, never the URL. This is not cosmetic: `req.baseUrl`
@@ -168,13 +169,23 @@ limits survive horizontal scaling. The denormalised assignment cache is reconcil
 1. **No rehearsed backup restore.** No cluster exists yet, so there is nothing to restore from.
    An untested backup is a hope, not a backup. This is the one remaining item that blocks
    taking money, and it cannot be closed from a laptop.
-2. **Nothing scrapes the metrics.** The endpoint is there and the numbers are right; no
-   Prometheus polls it and no alert fires on error rate or queue depth. Until then a bad deploy
-   is discovered by a customer.
+2. **Nothing scrapes the metrics.** The endpoint, the scrape config and nine alert rules all
+   exist and are tested; no Prometheus is deployed to run them. This is now a deployment task
+   rather than a development one — until it is done, a bad deploy is discovered by a customer.
 3. **No way to change plan.** Enforcement is complete; billing was deferred to manual
    invoicing for the first cohort.
 4. **Full GDPR erasure needs redaction.** Event summaries embed names for readability, so a
    deletion request needs those summaries redacted rather than only the source rows removed.
 
 The shortest remaining path to a first paying customer: provision Atlas, turn backups on,
-rehearse one restore, and point a scraper at `/health/metrics` with two alerts on it.
+rehearse one restore, and deploy Prometheus against the config in `ops/prometheus/`.
+
+Two things were learned building the alerts, and both are in the code now because neither is
+visible by inspection:
+
+- **Queue depth was never exported.** `setGauge` had no call sites at all, so the queue-depth
+  alert this document had recommended for weeks could not have been written, let alone fired.
+- **A counter that appears only once it is non-zero cannot be alerted on.** An absent series and
+  a quiet one are indistinguishable to Prometheus, so `increase(...) > 5` evaluates to nothing
+  until the first failure — precisely the moment it was supposed to fire. Known counters are now
+  declared at zero from boot, and a test asserts every metric the rules mention is exported.

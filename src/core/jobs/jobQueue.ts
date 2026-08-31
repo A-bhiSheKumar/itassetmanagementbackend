@@ -1,6 +1,7 @@
 import { Queue, Worker, type ConnectionOptions, type Job } from 'bullmq';
 import { env, isProduction, isTest } from '../../config/index.js';
 import { logger } from '../logging/index.js';
+import { metrics } from '../telemetry/index.js';
 import { QUEUE, DEFAULT_JOB_OPTIONS, type JobOptions, type JobPayloads, type QueueName } from './queues.js';
 
 /**
@@ -23,6 +24,22 @@ import { QUEUE, DEFAULT_JOB_OPTIONS, type JobOptions, type JobPayloads, type Que
 
 export type JobHandler<N extends QueueName> = (payload: JobPayloads[N]) => Promise<void>;
 
+/**
+ * A queue's backlog, for alerting.
+ *
+ * Depth is the signal that matters and no log line carries it: a queue is
+ * healthy at depth 200 if it is draining and broken at depth 20 if it is not.
+ * `failed` counts jobs that exhausted their retries and are sitting in the
+ * dead-letter set waiting for a human.
+ */
+export interface QueueDepth {
+  queue: QueueName;
+  waiting: number;
+  active: number;
+  delayed: number;
+  failed: number;
+}
+
 export interface JobQueue {
   readonly driver: 'bullmq' | 'inline';
   add<N extends QueueName>(queue: N, payload: JobPayloads[N], options?: JobOptions): Promise<void>;
@@ -30,6 +47,8 @@ export interface JobQueue {
   /** Starts consuming. Producers do not need this; the worker does. */
   start(): Promise<void>;
   close(): Promise<void>;
+  /** Current backlog per queue. Read at scrape time, so it is never stale. */
+  stats(): Promise<QueueDepth[]>;
 }
 
 // ── BullMQ ──────────────────────────────────────────────────────────────────
@@ -97,9 +116,15 @@ class BullMqQueue implements JobQueue {
         { connection: this.connection, concurrency },
       );
 
+      worker.on('completed', () => metrics.increment('jobs_completed'));
+
       worker.on('failed', (job, err) => {
         const exhausted = job && job.attemptsMade >= (job.opts.attempts ?? 1);
-        // A dead-lettered job needs a human. Retries in between are expected.
+        // A dead-lettered job needs a human. Retries in between are expected,
+        // and counting them separately keeps a retry storm distinguishable from
+        // a queue that is actually losing work.
+        metrics.increment(exhausted ? 'jobs_dead_lettered' : 'jobs_retried');
+
         logger[exhausted ? 'error' : 'warn'](
           { queue: name, jobId: job?.id, attempt: job?.attemptsMade, err },
           exhausted ? 'Job dead-lettered' : 'Job failed, will retry',
@@ -110,6 +135,32 @@ class BullMqQueue implements JobQueue {
     }
 
     logger.info({ queues: [...this.handlers.keys()] }, 'BullMQ workers started');
+  }
+
+  async stats(): Promise<QueueDepth[]> {
+    // Every declared queue, not just the ones this replica consumes — a backlog
+    // on a queue nobody is working is exactly the case worth alerting on, and
+    // reporting only consumed queues would hide it.
+    const names = Object.values(QUEUE) as QueueName[];
+
+    return Promise.all(
+      names.map(async (queue) => {
+        const counts = await this.queue(queue).getJobCounts(
+          'waiting',
+          'active',
+          'delayed',
+          'failed',
+        );
+
+        return {
+          queue,
+          waiting: counts.waiting ?? 0,
+          active: counts.active ?? 0,
+          delayed: counts.delayed ?? 0,
+          failed: counts.failed ?? 0,
+        };
+      }),
+    );
   }
 
   async close(): Promise<void> {
@@ -180,6 +231,22 @@ class InlineQueue implements JobQueue {
       { queues: [...this.handlers.keys()] },
       'Running jobs IN-PROCESS — no durability, no retries. Development only.',
     );
+  }
+
+  /**
+   * Always zero, honestly.
+   *
+   * This driver runs handlers synchronously, so there is never a backlog to
+   * report — the depth is genuinely zero rather than unknown.
+   */
+  async stats(): Promise<QueueDepth[]> {
+    return (Object.values(QUEUE) as QueueName[]).map((queue) => ({
+      queue,
+      waiting: 0,
+      active: 0,
+      delayed: 0,
+      failed: 0,
+    }));
   }
 
   async close(): Promise<void> {
