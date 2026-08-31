@@ -10,6 +10,7 @@ import {
 } from './core/db/index.js';
 import { seedPlans } from './modules/subscriptions/index.js';
 import { initJobQueue } from './core/jobs/index.js';
+import { registerJobHandlers, scheduleRecurringJobs } from './jobs.js';
 
 /**
  * API entrypoint.
@@ -29,14 +30,27 @@ async function start(): Promise<void> {
   await seedPlans();
 
   /**
-   * The API PRODUCES jobs; it never consumes them.
+   * The API PRODUCES jobs; in production it never consumes them.
    *
-   * No handlers are registered and start() is not called here — otherwise every
-   * API replica would also be a worker, and each scheduled scan would run once
-   * per replica.
+   * With BullMQ that separation is essential — otherwise every API replica is
+   * also a worker and each scheduled scan runs once per replica.
+   *
+   * The inline driver only ever appears when Redis is absent, which cannot
+   * happen in production (initJobQueue throws there). In that case there IS no
+   * separate worker process, so the API consumes its own jobs — otherwise
+   * `npm run dev` would queue an import that nothing ever runs, which looks
+   * exactly like a bug.
    */
   const queue = await initJobQueue();
-  logger.info({ driver: queue.driver }, 'Job queue ready (producer only)');
+
+  if (queue.driver === 'inline') {
+    registerJobHandlers();
+    await queue.start();
+    await scheduleRecurringJobs();
+    logger.warn('No Redis: this process is also acting as the worker. Development only.');
+  } else {
+    logger.info({ driver: queue.driver }, 'Job queue ready (producer only — run the worker too)');
+  }
 
   const app = createApp();
   const server: Server = app.listen(env.PORT, () => {

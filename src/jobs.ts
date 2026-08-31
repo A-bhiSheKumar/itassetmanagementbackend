@@ -2,6 +2,7 @@ import { QUEUE, getJobQueue } from './core/jobs/index.js';
 import { dispatchPending } from './core/events/index.js';
 import { logger } from './core/logging/index.js';
 import { rebuildAllMetrics, scanExpiringWarranties, sweepStorage } from './modules/reports/index.js';
+import { registerImportJobHandler } from './modules/imports/index.js';
 
 /**
  * The composition root for background work.
@@ -37,6 +38,10 @@ export function registerJobHandlers(): void {
     if (task === 'warranties' || task === 'all') await scanExpiringWarranties();
     if (task === 'storage-sweep' || task === 'all') await sweepStorage();
   });
+
+  // Import commits: several tenants in parallel, but each tenant's own imports
+  // serialised behind a lock — see modules/imports/import.queue.ts.
+  registerImportJobHandler();
 }
 
 /**

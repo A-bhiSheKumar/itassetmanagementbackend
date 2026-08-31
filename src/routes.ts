@@ -17,6 +17,7 @@ import { auditLogRoutes } from './modules/auditlog/index.js';
 import { documentRoutes } from './modules/documents/index.js';
 import { notificationRoutes } from './modules/notifications/index.js';
 import { dashboardRoutes, offboardingRoutes } from './modules/reports/index.js';
+import { importRoutes, exportRoutes } from './modules/imports/index.js';
 
 /**
  * The route table.
@@ -64,3 +65,5 @@ apiRouter.use('/audit-logs', auditLogRoutes);
 apiRouter.use('/documents', documentRoutes);
 apiRouter.use('/notifications', notificationRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
+apiRouter.use('/imports', importRoutes);
+apiRouter.use('/exports', exportRoutes);

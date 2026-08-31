@@ -72,7 +72,9 @@ class BullMqQueue implements JobQueue {
       attempts: options.attempts ?? DEFAULT_JOB_OPTIONS.attempts,
       backoff: { type: 'exponential', delay: options.backoffMs ?? DEFAULT_JOB_OPTIONS.backoffMs },
       // Deduplication: a job id that already exists is not queued twice.
-      ...(options.jobId ? { jobId: options.jobId } : {}),
+      // BullMQ rejects ':' outright — it is their Redis key separator — so
+      // callers may use it freely and it is normalised here.
+      ...(options.jobId ? { jobId: options.jobId.replace(/:/g, '-') } : {}),
       ...(options.delayMs ? { delay: options.delayMs } : {}),
       ...(options.everyMs ? { repeat: { every: options.everyMs } } : {}),
       // Keep a short tail for debugging; the rest is noise that fills Redis.

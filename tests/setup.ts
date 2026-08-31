@@ -1,6 +1,8 @@
 import { beforeAll, afterAll, afterEach, inject } from 'vitest';
 import mongoose from 'mongoose';
 import { registerGlobalPlugins } from '../src/core/db/index.js';
+import { initJobQueue, setJobQueue } from '../src/core/jobs/index.js';
+import { registerJobHandlers } from '../src/jobs.js';
 
 /**
  * Per-file database wiring.
@@ -12,6 +14,16 @@ beforeAll(async () => {
   // Plugins must be registered before any model compiles, or tenant scoping is
   // silently absent for that model. Idempotent, and this hook runs per file.
   registerGlobalPlugins();
+
+  /**
+   * Jobs run inline under test, so anything a request queues has finished by
+   * the time the request returns. A job that ran "later, on a worker" could not
+   * be asserted on at all.
+   */
+  setJobQueue(undefined);
+  const queue = await initJobQueue();
+  registerJobHandlers();
+  await queue.start();
 
   if (mongoose.connection.readyState === 0) {
     await mongoose.connect(inject('mongoUri'), {

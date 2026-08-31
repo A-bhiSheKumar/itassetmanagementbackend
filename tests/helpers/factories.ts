@@ -71,3 +71,22 @@ export async function seedTenant(app: Server, label: string): Promise<SeededTena
 export function auth(token: string): [string, string] {
   return ['Authorization', `Bearer ${token}`];
 }
+
+/**
+ * Raises a tenant's plan limits.
+ *
+ * Uses the real `entitlementOverrides` mechanism — the same one that grants a
+ * customer extra headroom while they migrate — rather than reaching past the
+ * entitlement system, so the limit check under test is the production one.
+ */
+export async function raiseLimits(
+  tenantId: string,
+  overrides: Record<string, number | null>,
+): Promise<void> {
+  const { SubscriptionModel } = await import('../../src/modules/subscriptions/index.js');
+
+  await SubscriptionModel.collection.updateOne(
+    { tenantId },
+    { $set: { entitlementOverrides: overrides } },
+  );
+}

@@ -111,6 +111,15 @@ model, so not one had a `tenantId` and every query ran unscoped. Plugins now reg
 side effect of importing `core/db`, every model goes through `defineModel()`, and
 `tests/security/modelScoping.test.ts` asserts the invariant directly.
 
+**BullMQ rejects `:` in a custom job id** — it is their Redis key separator, and the error
+(`Custom Id cannot contain :`) only appears when Redis is actually reachable. The queue layer
+normalises it now, so callers can use whatever id reads well.
+
+**`errors` is a RESERVED mongoose path.** It is where mongoose stores ValidationError
+entries, so a validation failure on the document silently overwrites whatever you put there.
+Mongoose warns about it; the warning is right. The import row stores `issues` and the API
+still calls the field `errors`, which is what a client expects.
+
 **`session.withTransaction()` ALREADY retries.** It implements the driver-spec retry loop for
 TransientTransactionError and UnknownTransactionCommitResult, for up to 120 seconds. Wrapping
 it in a retry loop of our own multiplied that into a six-minute worst case for a single HTTP
@@ -194,7 +203,12 @@ unpredictable moment cannot be asserted on — and a suite that needs external s
 people stop running.
 
 Queues: `outbox` (drains events a request could not flush), `scheduled` (rollups, warranty
-notices, storage sweeps), with `imports` and `exports` landing in M5.
+notices, storage sweeps), `imports` (staged commits) and `exports`.
+
+Import commits run several tenants in parallel but serialise each tenant's own imports behind
+a lock. Queue-level concurrency of 1 would have made every customer wait behind whoever
+uploaded first; two concurrent imports of overlapping data for the SAME tenant both see "no
+existing record" in their dry run and both create it.
 
 ## Testing
 
