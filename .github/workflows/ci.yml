@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Advisories land on their own schedule, not ours. A weekly run catches a new
+  # one against unchanged code — which is exactly when nobody is looking.
+  schedule:
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `ci` not `install`: it installs exactly the lockfile and fails if
+      # package.json and the lockfile disagree, which is the point of committing
+      # a lockfile at all.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # A modular monolith only stays modular if the boundaries are mechanical.
+      - name: Module boundaries
+        run: npm run lint:boundaries
+
+      # The suite starts its own in-memory MongoDB replica set, so there is no
+      # service container to configure — and no way for CI and a developer
+      # machine to be running different versions.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Separate job so a new advisory does not mask a genuine test failure, and
+      # a red audit is legible on its own.
+      - name: Audit
+        run: npm audit --audit-level=high
+
+  loadtest:
+    name: Load test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Slow and noisy against a shared runner, so it does not gate a pull
+    # request. On main it is the regression alarm for the read paths.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # A CI runner is slower and noisier than a laptop, so the gate is set
+      # where it still catches a real regression without failing on jitter.
+      - name: Load test
+        run: ASSETS=50000 SAMPLES=20 npm run loadtest
