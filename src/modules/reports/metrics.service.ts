@@ -42,8 +42,9 @@ export async function rebuildDailyMetrics(): Promise<MetricsDaily> {
       ]),
       AssetModel.countDocuments({ currentAssignment: { $ne: null } }),
       PersonModel.countDocuments({ status: 'active' }),
+      // $type, not $ne: null — it is what makes the partial index usable.
       AssetModel.countDocuments({
-        'warranty.expiresAt': { $ne: null, $lte: in30Days },
+        'warranty.expiresAt': { $type: 'date', $lte: in30Days },
         lifecycleState: { $nin: ['disposed', 'lost', 'retired'] },
       }),
       AssignmentModel.countDocuments({

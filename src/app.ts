@@ -9,6 +9,7 @@ import {
   errorHandler,
   notFoundHandler,
   authenticate,
+  limits,
 } from './core/http/index.js';
 import { permissionResolver } from './modules/identity/index.js';
 import { apiRouter } from './routes.js';
@@ -97,6 +98,16 @@ export function createApp(): Express {
   // Deliberately does NOT reject anonymous requests — enforcement belongs to
   // each route's guard, so public and guarded routes share one code path.
   app.use(authenticate(permissionResolver));
+
+  /**
+   * Three independent dimensions, in order of how much they protect.
+   *
+   * Per-IP guards the server against anyone. Per-user and per-tenant guard
+   * customers from EACH OTHER — one busy tenant must not degrade everyone
+   * else's service, and a per-IP limit alone is defeated by a whole company
+   * behind one NAT.
+   */
+  app.use('/api/v1', limits.perIp, limits.perUser, limits.perTenant);
 
   app.use('/api/v1', apiRouter);
 

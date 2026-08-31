@@ -3,7 +3,9 @@
 Node · Express · TypeScript · MongoDB (Mongoose) · Redis · BullMQ
 
 Architecture and rationale: [`docs/`](docs/). Read
-[`02-architecture.md`](docs/02-architecture.md) before adding a module.
+[`02-architecture.md`](docs/02-architecture.md) before adding a module,
+[`10-production-readiness.md`](docs/10-production-readiness.md) before deploying, and
+[`11-runbooks.md`](docs/11-runbooks.md) when something is on fire.
 
 The React client lives in a separate repository: [itassetmanagementfrontend](https://github.com/A-bhiSheKumar/itassetmanagementfrontend).
 
@@ -37,6 +39,7 @@ Tests need no infrastructure: they start their own in-memory replica set.
 | `npm run lint` | ESLint, including the module-boundary rules |
 | `npm run lint:boundaries` | dependency-cruiser |
 | `npm run build` | Compile to `dist/` |
+| `npm run loadtest` | 100,000 assets, p95 budget 300 ms. `ASSETS=10000` for a quick run |
 
 ---
 
@@ -176,6 +179,31 @@ green, and the suite is no slower.
 Two lessons worth keeping. Hypotheses that *reduce* a flake are not necessarily the cause —
 each real bug found here made it rarer and hid the actual one. And a symptom that lands
 somewhere different every time is usually a shared resource, not shared logic.
+
+## Performance
+
+`npm run loadtest` seeds 100,000 assets in one tenant plus 20,000 in another — so every figure
+includes the cost of filtering the other tenant out — and measures the read paths.
+
+At 100k, p95 is **3.5 ms** for the asset list, **2.5 ms** for a custom-field filter and
+**25.7 ms** for the dashboard, against a 300 ms budget. Full table in
+[docs/10-production-readiness.md](docs/10-production-readiness.md) §4.
+
+`tests/security/queryPlans.test.ts` runs `explain()` on every important query and fails on a
+collection scan. **The plan is the proof, not the index definition** — and that test has now
+caught three indexes that existed only on paper:
+
+- a partial filter using `$nin`, which MongoDB rejects outright, so the warranty index never
+  existed and the nightly scan silently scanned;
+- two `{tenantId: 1}` unique indexes colliding with the plugin's own auto-named `tenantId_1`,
+  so those uniqueness constraints never existed either;
+- a wildcard index the planner would not consider, because `deletedAt` — injected into every
+  query by the soft-delete plugin — was not in its prefix.
+
+The subtlest one is worth stating on its own: **a partial index is only used when the query
+provably implies its filter.** The index was partial on `{$type: 'date'}` and the query said
+`{$ne: null}`, which does not imply "is a date". The planner refused it and scanned 2,000
+documents for 300 results. That single word was 90 ms of the dashboard's 103 ms.
 
 ## Background jobs
 

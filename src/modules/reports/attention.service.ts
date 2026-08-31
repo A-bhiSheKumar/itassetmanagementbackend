@@ -33,9 +33,18 @@ const HORIZON_DAYS = 30;
 export async function warrantyPipeline(horizonDays = HORIZON_DAYS): Promise<ExpiringWarranty[]> {
   const horizon = new Date(Date.now() + horizonDays * 86_400_000);
 
+  // A disposed or lost asset's warranty is nobody's problem.
+  /**
+   * `$type: 'date'` rather than `$ne: null`, deliberately.
+   *
+   * The index is partial on `{'warranty.expiresAt': {$type: 'date'}}`, and
+   * MongoDB uses a partial index only when the query PROVABLY implies its
+   * filter. `$ne: null` does not imply "is a date", so the planner refused the
+   * index and fell back to scanning: 2,000 documents examined instead of 300
+   * for the same 300 results, and 90ms of the dashboard's 103ms at 100k assets.
+   */
   const rows = await AssetModel.find({
-    'warranty.expiresAt': { $ne: null, $lte: horizon },
-    // A disposed or lost asset's warranty is nobody's problem.
+    'warranty.expiresAt': { $type: 'date', $lte: horizon },
     lifecycleState: { $nin: ['disposed', 'lost', 'retired'] },
   })
     .sort({ 'warranty.expiresAt': 1 })
@@ -56,8 +65,10 @@ export async function needsAttention(): Promise<AttentionRow[]> {
   const horizon = new Date(Date.now() + HORIZON_DAYS * 86_400_000);
 
   const [expiring, unacknowledged, offboarding, damaged] = await Promise.all([
+    // See the note in warrantyPipeline: $type is what lets the partial index
+    // serve this. It is the difference between 90ms and 2ms here.
     AssetModel.countDocuments({
-      'warranty.expiresAt': { $ne: null, $lte: horizon },
+      'warranty.expiresAt': { $type: 'date', $lte: horizon },
       lifecycleState: { $nin: ['disposed', 'lost', 'retired'] },
     }),
     AssignmentModel.countDocuments({

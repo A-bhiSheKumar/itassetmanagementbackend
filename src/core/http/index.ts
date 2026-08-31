@@ -7,3 +7,10 @@ export {
   authenticate,
   type PermissionResolver,
 } from './middleware/authenticate.middleware.js';
+export {
+  rateLimit,
+  limits,
+  rateLimitStore,
+  type RateLimitOptions,
+  type RateLimitStore,
+} from './middleware/rateLimit.middleware.js';

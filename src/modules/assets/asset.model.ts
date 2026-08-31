@@ -118,17 +118,39 @@ assetSchema.index({ tenantId: 1, 'placement.departmentId': 1, lifecycleState: 1 
 // own view. Sparse: unassigned assets skip the index entirely.
 assetSchema.index({ tenantId: 1, 'currentAssignment.assigneeId': 1 }, { sparse: true });
 
-// Warranty pipeline and the nightly expiry scan. The partial filter keeps
-// years of disposed assets out of an index queried for every tenant, nightly.
+/**
+ * Warranty pipeline and the nightly expiry scan.
+ *
+ * The partial filter covers only assets that HAVE a warranty date, which is the
+ * bulk of the saving — cables, adapters and furniture never enter the index.
+ *
+ * It deliberately does not also exclude disposed and lost assets, even though
+ * the query does: MongoDB permits only $eq, $exists, $type, $gt/$gte/$lt/$lte
+ * and $and in a partial filter. A `$nin` here is rejected outright — and
+ * because autoIndex builds indexes lazily and swallows the failure, the index
+ * simply never existed and the nightly scan quietly became a collection scan
+ * for every tenant. Caught by tests/security/queryPlans.test.ts, which is the
+ * argument for asserting on the PLAN rather than the definition.
+ */
 assetSchema.index(
-  { tenantId: 1, 'warranty.expiresAt': 1 },
-  {
-    partialFilterExpression: {
-      'warranty.expiresAt': { $type: 'date' },
-      lifecycleState: { $nin: ['disposed', 'lost'] },
-    },
-  },
+  // lifecycleState is in the index, not just the filter. Without it every
+  // matching document had to be FETCHED to check its state, which made the
+  // dashboard's warranty count 90ms of its ~103ms at 100k assets — measured,
+  // not guessed. ESR order: equality (tenantId), then range (expiresAt), then
+  // the inequality last.
+  { tenantId: 1, 'warranty.expiresAt': 1, lifecycleState: 1 },
+  { partialFilterExpression: { 'warranty.expiresAt': { $type: 'date' } } },
 );
+
+/**
+ * Condition, for the dashboard's "damaged assets" row.
+ *
+ * Added after the 100k load test: the attention panel counts live (each row is
+ * a small set someone acts on today, and a stale one would be worse than none),
+ * and without this the damaged count scanned every asset in the tenant. It was
+ * the single slowest thing on the dashboard.
+ */
+assetSchema.index({ tenantId: 1, condition: 1, lifecycleState: 1 });
 
 assetSchema.index({ tenantId: 1, searchTokens: 1 });
 
@@ -140,10 +162,17 @@ assetSchema.index({ tenantId: 1, parentAssetId: 1 }, { sparse: true });
 /**
  * Filter and sort on ANY custom field without knowing its name at schema time.
  *
- * Compound wildcard indexes need MongoDB 7.0+. This is the index that makes
+ * Compound wildcard indexes need MongoDB 7.0+. This is what makes
  * `filter[cf.n.ram_gb][gte]=16` an index scan rather than a collection scan.
+ *
+ * `deletedAt` is in the prefix deliberately. The soft-delete plugin injects
+ * `deletedAt: null` into EVERY query, and a compound wildcard index can only
+ * serve its prefix fields plus one wildcard field — so without it here, the
+ * planner preferred an index that covered deletedAt and ignored this one
+ * entirely. The index existed and did nothing, which is the exact failure
+ * tests/security/queryPlans.test.ts is for.
  */
-assetSchema.index({ tenantId: 1, 'cf.$**': 1 });
+assetSchema.index({ tenantId: 1, deletedAt: 1, 'cf.$**': 1 });
 
 export type Asset = Scoped<InferSchemaType<typeof assetSchema>>;
 export type AssetDocument = HydratedDocument<Asset>;

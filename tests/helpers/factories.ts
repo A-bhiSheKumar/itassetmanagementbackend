@@ -72,6 +72,78 @@ export function auth(token: string): [string, string] {
   return ['Authorization', `Bearer ${token}`];
 }
 
+export interface SeededMember {
+  membershipId: string;
+  userId: string;
+  email: string;
+  /** Tenant-scoped access token for this role. */
+  accessToken: string;
+  roleKey: string;
+}
+
+/**
+ * Adds a member with a given system role and signs them in.
+ *
+ * Goes through invite → accept → login → select-tenant, the real flow, so the
+ * resulting token carries exactly the permissions a real member of that role
+ * would have — not a hand-assembled set that could drift from production.
+ */
+export async function seedMember(
+  app: Server,
+  owner: SeededTenant,
+  roleKey: 'owner' | 'admin' | 'manager' | 'member',
+): Promise<SeededMember> {
+  const password = 'correct-horse-battery-staple';
+  const email = `${roleKey}-${ulid().toLowerCase()}@example.test`;
+
+  const roles = await request(app)
+    .get('/api/v1/roles')
+    .set('Authorization', `Bearer ${owner.accessToken}`);
+
+  const role = roles.body.data.find((r: { key: string }) => r.key === roleKey);
+  if (!role) throw new Error(`No system role "${roleKey}" in this tenant.`);
+
+  const invite = await request(app)
+    .post('/api/v1/members/invite')
+    .set('Authorization', `Bearer ${owner.accessToken}`)
+    .send({ email, roleIds: [role.id] });
+
+  if (invite.status !== 201) {
+    throw new Error(`Failed to invite ${roleKey}: ${invite.status} ${JSON.stringify(invite.body)}`);
+  }
+
+  const accepted = await request(app).post('/api/v1/auth/accept-invitation').send({
+    token: invite.body.data.inviteToken,
+    password,
+    name: `${roleKey} member`,
+  });
+
+  const selected = await request(app)
+    .post('/api/v1/auth/select-tenant')
+    .set('Authorization', `Bearer ${accepted.body.data.accessToken}`)
+    .send({ tenantId: owner.tenantId });
+
+  if (selected.status !== 200) {
+    throw new Error(`Failed to select tenant as ${roleKey}: ${selected.status}`);
+  }
+
+  const members = await request(app)
+    .get('/api/v1/members')
+    .set('Authorization', `Bearer ${owner.accessToken}`);
+
+  const membership = members.body.data.find(
+    (m: { userId: string }) => m.userId === accepted.body.data.user.id,
+  );
+
+  return {
+    membershipId: membership?.id ?? '',
+    userId: accepted.body.data.user.id,
+    email,
+    accessToken: selected.body.data.accessToken,
+    roleKey,
+  };
+}
+
 /**
  * Raises a tenant's plan limits.
  *

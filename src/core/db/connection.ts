@@ -118,6 +118,25 @@ export async function connectDatabase(options: ConnectOptions = {}): Promise<typ
   const uri = options.uri ?? env.MONGO_URI;
 
   mongoose.connection.on('error', (err) => logger.error({ err }, 'MongoDB connection error'));
+
+  /**
+   * Surface index build failures.
+   *
+   * autoIndex creates indexes in the background and, by default, a failure is
+   * only ever emitted on this event — nothing throws, nothing logs, and the
+   * index simply does not exist. A malformed partial filter cost us a silently
+   * missing warranty index for three milestones.
+   */
+  for (const model of Object.values(mongoose.models)) {
+    model.on('index', (err: Error | undefined) => {
+      if (err) {
+        logger.error(
+          { err, model: model.modelName },
+          'INDEX BUILD FAILED — queries on this collection will scan',
+        );
+      }
+    });
+  }
   mongoose.connection.on('disconnected', () => logger.warn('MongoDB disconnected'));
   mongoose.connection.on('reconnected', () => logger.info('MongoDB reconnected'));
 

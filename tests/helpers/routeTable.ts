@@ -34,7 +34,28 @@ function decodeMountPath(layer: any): string {
   const match = source.match(/^\^\\\/(.*?)\\\/\?\(\?=\\\/\|\$\)$/);
   if (!match?.[1]) return '';
 
-  return `/${match[1].replace(/\\\//g, '/').replace(/\\\./g, '.')}`;
+  let path = `/${match[1].replace(/\\\//g, '/').replace(/\\\./g, '.')}`;
+
+  /**
+   * A mount path can contain params — `apiRouter.use('/assets/:id', ...)`.
+   *
+   * Express compiles those to a capture group, so the decoded source comes back
+   * as `/assets(?:/([^/]+?))` rather than `/assets/:id`. Left like that,
+   * fillParams() has nothing to substitute, the generated suites request a URL
+   * containing a literal regex, and every such route quietly "passes" with a
+   * 404 — which is exactly how a nested route escapes IDOR testing.
+   *
+   * layer.keys carries the param names, in order.
+   */
+  const keys: Array<{ name: string | number }> = layer.keys ?? [];
+  let index = 0;
+
+  path = path.replace(/\(\?:\/\(\[\^\/\]\+\?\)\)/g, () => {
+    const key = keys[index++];
+    return `/:${key?.name ?? 'param'}`;
+  });
+
+  return path;
 }
 
 function walk(stack: any[], prefix: string, out: RouteEntry[]): void {

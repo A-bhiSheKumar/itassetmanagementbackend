@@ -54,7 +54,9 @@ auditLogSchema.index(
   { partialFilterExpression: { outcome: 'denied' } },
 );
 
-auditLogSchema.index({ sourceEventId: 1 }, { sparse: true });
+// Prefixed with tenantId like every other index: a tenant-scoped query filters
+// on tenantId first, so an index that does not lead with it can never serve one.
+auditLogSchema.index({ tenantId: 1, sourceEventId: 1 }, { sparse: true });
 auditLogSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export type AuditLog = Scoped<InferSchemaType<typeof auditLogSchema>>;

@@ -133,6 +133,97 @@ describe('upload and column mapping', () => {
   });
 });
 
+describe('Excel files', () => {
+  /** Builds a real .xlsx in memory, with the cell types a real workbook has. */
+  async function buildWorkbook(): Promise<Buffer> {
+    const { default: ExcelJS } = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Assets');
+
+    sheet.addRow(['Asset Name', 'Serial No', 'Date Purchased', 'Cost']);
+    // A real Date, not a string — Excel stores dates as numbers and exceljs
+    // hands them back as Date objects.
+    sheet.addRow(['MacBook Pro', 'XL-1', new Date(Date.UTC(2026, 2, 14)), 1299]);
+    sheet.addRow(['ThinkPad X1', 'XL-2', new Date(Date.UTC(2026, 5, 1)), 999.5]);
+    // Trailing blank rows, which every real spreadsheet has.
+    sheet.addRow([]);
+    sheet.addRow([]);
+
+    return Buffer.from(await workbook.xlsx.writeBuffer());
+  }
+
+  it('parses a real workbook, including dates and blank rows', async () => {
+    const xlsx = await buildWorkbook();
+
+    const created = await as(
+      request(server())
+        .post(
+          `/api/v1/imports?entityType=asset&fileName=assets.xlsx&assetTypeId=${laptopTypeId}`,
+        )
+        .set('Content-Type', 'application/octet-stream')
+        .send(xlsx),
+    );
+
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.data.fileFormat).toBe('xlsx');
+    // The two trailing blank rows must not become two empty records.
+    expect(created.body.data.counts.total).toBe(2);
+    expect(created.body.data.detectedHeaders).toEqual([
+      'Asset Name',
+      'Serial No',
+      'Date Purchased',
+      'Cost',
+    ]);
+  });
+
+  it('imports a workbook end to end', async () => {
+    const xlsx = await buildWorkbook();
+
+    const created = await as(
+      request(server())
+        .post(
+          `/api/v1/imports?entityType=asset&fileName=assets.xlsx&assetTypeId=${laptopTypeId}`,
+        )
+        .set('Content-Type', 'application/octet-stream')
+        .send(xlsx),
+    );
+
+    const id = created.body.data.id;
+
+    await as(
+      request(server())
+        .patch(`/api/v1/imports/${id}/mapping`)
+        .send({ columnMapping: created.body.data.columnMapping, dateFormat: 'ISO' }),
+    ).expect(200);
+
+    const validated = await as(request(server()).post(`/api/v1/imports/${id}/validate`));
+    expect(validated.body.data.counts.valid, JSON.stringify(validated.body.data.counts)).toBe(2);
+
+    await as(request(server()).post(`/api/v1/imports/${id}/commit`));
+
+    const assets = await as(request(server()).get('/api/v1/assets'));
+    expect(assets.body.data).toHaveLength(2);
+    // A Date cell comes back as a Date, and must survive as one.
+    expect(assets.body.data.map((a: { purchase: { date: string } }) => a.purchase.date).join()).toContain(
+      '2026-03-14',
+    );
+  });
+
+  it('rejects a file that claims to be xlsx but is not', async () => {
+    const res = await as(
+      request(server())
+        .post(
+          `/api/v1/imports?entityType=asset&fileName=fake.xlsx&assetTypeId=${laptopTypeId}`,
+        )
+        .set('Content-Type', 'application/octet-stream')
+        .send(Buffer.from('this is not a workbook')),
+    );
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toContain('Excel');
+  });
+});
+
 describe('the dry run', () => {
   it('reports what would happen without writing anything', async () => {
     const { validated } = await stage(

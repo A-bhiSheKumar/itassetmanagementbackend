@@ -37,7 +37,16 @@ const subscriptionSchema = new Schema(
   { timestamps: true },
 );
 
-subscriptionSchema.index({ tenantId: 1 }, { unique: true });
+/**
+ * Named explicitly.
+ *
+ * The tenant-scope plugin already declares `tenantId` as indexed, which
+ * auto-generates the name `tenantId_1`. A second index on the same key with
+ * different options collides on that name, and MongoDB refuses it — so this
+ * unique constraint silently never existed and a tenant could have ended up
+ * with two of these. Surfaced by the index-error logging in core/db.
+ */
+subscriptionSchema.index({ tenantId: 1 }, { unique: true, name: 'tenantId_unique' });
 subscriptionSchema.index({ status: 1, currentPeriodEnd: 1 });
 
 export type Subscription = InferSchemaType<typeof subscriptionSchema>;

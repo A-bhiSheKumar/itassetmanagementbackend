@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../core/http/index.js';
 import { validate } from '../../core/validation/index.js';
 import { requirePermission } from '../../core/authz/index.js';
+import { limits } from '../../core/http/index.js';
 import * as controller from './import.controller.js';
 import {
   createImportSchema,
@@ -32,8 +33,11 @@ importRoutes.get(
 
 importRoutes.get('/', requirePermission('import:run'), asyncHandler(controller.index));
 
+// Parsing and staging a file is expensive to serve, so it gets its own budget
+// on top of the standing per-tenant limit.
 importRoutes.post(
   '/',
+  limits.heavy,
   requirePermission('import:run'),
   validate(createImportSchema),
   asyncHandler(controller.create),
@@ -82,6 +86,7 @@ export const exportRoutes = Router();
 
 exportRoutes.get(
   '/:entityType',
+  limits.heavy,
   requirePermission('export:run'),
   validate(exportSchema),
   asyncHandler(controller.exportEntities),

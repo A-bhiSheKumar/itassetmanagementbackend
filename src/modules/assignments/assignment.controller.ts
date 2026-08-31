@@ -1,5 +1,7 @@
 import type { Request, Response } from 'express';
 import { ok, created, list } from '../../core/http/index.js';
+import { NotFoundError } from '../../core/errors/index.js';
+import { AssetModel } from '../assets/index.js';
 import { isProduction } from '../../config/index.js';
 import type { AssignmentDocument } from './assignment.model.js';
 import { AssignmentModel } from './assignment.model.js';
@@ -66,7 +68,16 @@ export async function acknowledge(req: Request, res: Response): Promise<void> {
 
 /** Chain of custody for one asset. */
 export async function history(req: Request, res: Response): Promise<void> {
-  const rows = await service.assignmentHistory(req.params.id!);
+  const assetId = req.params.id!;
+
+  // Resolve the asset first. Querying assignments directly is tenant-scoped so
+  // it cannot leak, but it answers a foreign id with an empty 200 — breaking
+  // the rule that a record you cannot see is indistinguishable from one that
+  // does not exist (ADR-015).
+  const asset = await AssetModel.findById(assetId).select('_id').lean();
+  if (!asset) throw new NotFoundError('Asset');
+
+  const rows = await service.assignmentHistory(assetId);
   ok(res, rows.map(present));
 }
 
