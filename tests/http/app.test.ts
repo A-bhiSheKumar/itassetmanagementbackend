@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { useTestServer } from '../helpers/testServer.js';
+import { toPattern } from '../../src/core/telemetry/requestMetrics.middleware.js';
 
 /**
  * HTTP smoke tests.
@@ -104,5 +105,82 @@ describe('security headers', () => {
 
     expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
     expect(res.headers['access-control-allow-credentials']).toBe('true');
+  });
+});
+
+describe('telemetry', () => {
+  it('exposes Prometheus metrics as text, not as the JSON envelope', async () => {
+    await request(server()).get('/api/v1/health/live');
+
+    const res = await request(server()).get('/api/v1/health/metrics');
+
+    expect(res.status).toBe(200);
+    // A scraper expects the exposition format and nothing else.
+    expect(res.headers['content-type']).toContain('text/plain');
+    expect(res.text).toContain('# TYPE itam_requests_total counter');
+    expect(res.text).toContain('itam_request_duration_ms_bucket');
+  });
+
+  it('records requests against the route PATTERN, never the URL', async () => {
+    await request(server()).get('/api/v1/health/live');
+
+    const res = await request(server()).get('/api/v1/health/metrics');
+
+    // A per-id series would be unbounded cardinality — the standard way to take
+    // down a metrics backend.
+    expect(res.text).toContain('/api/v1/health/live');
+    expect(res.text).not.toMatch(/route="[^"]*\/[0-9a-f]{24}/);
+  });
+
+  it('counts an unmatched request without inventing a route for it', async () => {
+    await request(server()).get('/api/v1/definitely-not-a-route');
+
+    const res = await request(server()).get('/api/v1/health/metrics');
+    expect(res.text).toContain('unmatched');
+  });
+
+  it('summarises error rate for a human', async () => {
+    const res = await request(server()).get('/api/v1/health/summary');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      requests: expect.any(Number),
+      errorRate: expect.any(Number),
+      errorReporter: 'logging',
+    });
+  });
+
+  it('does not count a 404 as an error', async () => {
+    await request(server()).get('/api/v1/nope');
+
+    const res = await request(server()).get('/api/v1/health/summary');
+    // A 404 or a 403 is the system working. Only 5xx is an error worth alerting
+    // on, and conflating them makes the alarm useless.
+    expect(res.body.data.errorRate).toBe(0);
+  });
+});
+
+describe('metric label cardinality', () => {
+  // A router mounted at /assets/:id gives req.baseUrl as the matched URL, not
+  // the pattern — so joining it to req.route.path naively produced one metric
+  // series per asset. Asserted directly because reaching the bug through HTTP
+  // needs an authenticated request, which this smoke-test file has no tenant for;
+  // the suite-wide assertion above is what proves it end to end.
+  it('normalises every id shape out of a mounted route prefix', () => {
+    expect(toPattern('/api/v1/assets/6a94f3aabbccdd0011223344', '/assign')).toBe(
+      '/api/v1/assets/:id/assign',
+    );
+    expect(toPattern('/api/v1/people/01HQ8XKZ9T4M2NPQRSVWXY3BCD', '/assets')).toBe(
+      '/api/v1/people/:id/assets',
+    );
+    expect(toPattern('/api/v1/imports/3f2504e0-4f89-11d3-9a0c-0305e82c3301', '/commit')).toBe(
+      '/api/v1/imports/:id/commit',
+    );
+  });
+
+  it('leaves a pattern that carries no id alone', () => {
+    expect(toPattern('/api/v1/assets', '/')).toBe('/api/v1/assets');
+    expect(toPattern('/api/v1/assets', '/:id')).toBe('/api/v1/assets/:id');
+    expect(toPattern('', '/')).toBe('/');
   });
 });

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { isDatabaseHealthy } from '../../core/db/index.js';
 import { ok } from '../../core/http/index.js';
+import { metrics, getErrorReporter, LoggingErrorReporter } from '../../core/telemetry/index.js';
 
 /**
  * Two endpoints, two different questions (docs/02-architecture.md §13):
@@ -34,4 +35,27 @@ export function ready(_req: Request, res: Response): void {
   }
 
   ok(res, { status: 'ready', checks });
+}
+
+/**
+ * Prometheus scrape target.
+ *
+ * Text, not the JSON envelope — a scraper expects the exposition format and
+ * nothing else. Per-replica by nature; aggregating across replicas is the
+ * scraper's job.
+ */
+export function prometheus(_req: Request, res: Response): void {
+  res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+  res.send(metrics.render());
+}
+
+/** The same numbers, readable, for a human or a status page. */
+export function summary(_req: Request, res: Response): void {
+  const reporter = getErrorReporter();
+
+  ok(res, {
+    ...metrics.summary(),
+    errorReporter: reporter.name,
+    ...(reporter instanceof LoggingErrorReporter ? { reportedErrors: reporter.snapshot() } : {}),
+  });
 }

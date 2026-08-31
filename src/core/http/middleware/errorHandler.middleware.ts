@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { ZodError } from 'zod';
 import { AppError, DuplicateValueError, ErrorCode, ValidationError } from '../../errors/index.js';
 import { logger } from '../../logging/index.js';
+import { reportError } from '../../telemetry/index.js';
 import { getContext } from '../../context/index.js';
 import { isProduction } from '../../../config/index.js';
 
@@ -118,6 +119,9 @@ export function errorHandler(
     // Unexpected errors get the original throw, not the translated one — the
     // stack of the wrapper is useless for debugging.
     logger.error({ err, code: appError.code }, 'Unhandled error');
+
+    // One place, carrying tenant and request context. Never throws back.
+    reportError(err, { code: appError.code, status: appError.status });
   }
 
   res.status(appError.status).json({

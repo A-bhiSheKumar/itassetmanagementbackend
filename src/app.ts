@@ -14,6 +14,7 @@ import {
 import { permissionResolver } from './modules/identity/index.js';
 import { apiRouter } from './routes.js';
 import { registerEventSubscribers } from './subscribers.js';
+import { requestMetrics } from './core/telemetry/index.js';
 
 export function createApp(): Express {
   // Idempotent, and here as well as in the entrypoints so that anything which
@@ -93,6 +94,9 @@ export function createApp(): Express {
 
   // Opens the ambient context. Must precede every route.
   app.use(requestContextMiddleware);
+
+  // Times everything, including requests that never match a route.
+  app.use(requestMetrics);
 
   // Populates the context from the Authorization header when one is present.
   // Deliberately does NOT reject anonymous requests — enforcement belongs to

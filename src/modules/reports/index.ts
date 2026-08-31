@@ -14,6 +14,12 @@ export {
   type OutstandingItem,
 } from './offboarding.service.js';
 export {
+  reconcileTenant,
+  reconcileAll,
+  type ReconciliationReport,
+  type Discrepancy,
+} from './reconciliation.service.js';
+export {
   scanExpiringWarranties,
   rebuildAllMetrics,
   sweepStorage,

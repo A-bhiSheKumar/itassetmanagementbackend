@@ -50,7 +50,12 @@ describe('route guards', () => {
       'GET /api/v1/documents/download',
       // Polled by the load balancer, before any token exists.
       'GET /api/v1/health/live',
+      // Scrape target. Carries route patterns, counts and latencies — never a
+      // tenant id, a record id or a name. Kept off the internet at the network
+      // layer, not with a token a Prometheus scraper cannot present.
+      'GET /api/v1/health/metrics',
       'GET /api/v1/health/ready',
+      'GET /api/v1/health/summary',
       // Credential endpoints: by definition reached without a session.
       'POST /api/v1/auth/accept-invitation',
       'POST /api/v1/auth/login',

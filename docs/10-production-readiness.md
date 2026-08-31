@@ -37,18 +37,25 @@ pipeline yet, which is the honest gap. Everything in this document is currently 
 
 ---
 
-## 3. Rate limiting — the real limitation
+## 3. Rate limiting
 
 Three dimensions are enforced: per IP, per user, per tenant. The per-tenant one is the
 important one, because it is what stops a single noisy customer degrading everyone else.
 
-**The counters are in memory.** With N API replicas each enforces its own counter, so the
-effective limit is N times what it says. That is fine for a single process and wrong for a
-scaled deployment. The store is behind an interface (`RateLimitStore`) so a Redis-backed
-implementation is a drop-in — Redis is already a dependency for the job queue.
+**Counters are shared across replicas** (`RedisRateLimitStore`), so the number in the config
+is the number that is enforced — previously, with in-memory counters and N replicas, the
+effective limit was N times what it said and it drifted every time the deployment scaled.
+`INCR` and `PEXPIRE` run in one Lua script: two round trips would race, and a crash between
+them would leave a key with no expiry, locking that client out permanently.
 
-Until then the published numbers are deliberately conservative, and the limits that actually
-matter — login and invitation — are the tightest.
+Two deliberate trades:
+
+- **Fixed window, not sliding.** A fixed window permits up to 2× the limit across a boundary.
+  It bounds sustained load, which is what actually threatens the service, and the limits where
+  a burst would matter — login, invitation — are small enough that 2× is still small.
+- **Fails open, loudly.** If Redis is unreachable the local per-replica counter still applies
+  and one error line is logged. Rate limiting protects availability; it must not become the
+  thing that removes it.
 
 ---
 
@@ -99,9 +106,14 @@ the order: profile, then fix.
 - **Restore rehearsal** — **not done.** An untested backup is a hope, not a backup. It needs
   a real cluster and should be repeated quarterly.
 - **Retention** — TTL indexes on `expiresAt`, stamped per document from the tenant's plan.
-- **Reconciliation jobs** — the `currentAssignment` cache is written only inside the
-  assignment transaction; a nightly job to assert it agrees with the assignment collection is
-  **specified but not built**.
+- **Reconciliation job** — built and running nightly, before the rollup. It checks
+  `currentAssignment` against the assignment collection in both directions, because they fail
+  differently: an active assignment the asset does not point at makes the asset look free, and
+  someone assigns it to a second person; an asset pointing at a returned assignment makes it
+  look held, and nobody can assign it at all. It also recomputes the usage counters that drive
+  plan enforcement. Repairs when run as a job, and every repair is logged and counted — a
+  rising count means something is writing around the assignment service, and the repair only
+  treats the symptom.
 - **Tenant export and purge** — export exists per entity; whole-tenant export and verified
   deletion are **not built**.
 
@@ -117,10 +129,15 @@ the order: profile, then fix.
 | Automatic redaction of tokens, passwords and PII fields | Done |
 | Boot-time env validation | Done — the process refuses to start on a missing variable |
 | Index build failures surfaced | Done — and it immediately found two silently-missing indexes |
-| Error tracking (Sentry) | **Not wired.** The error handler has the hook point |
-| Metrics endpoint / dashboards | **Not built** |
-| Alerting on error rate, queue depth, DB latency | **Not built** |
-| CI pipeline | **Not built** — everything here is run by hand |
+| Error tracking | Done — Sentry-shaped reporter behind an interface, so the vendor is a config change |
+| Metrics endpoint | Done — `/health/metrics` in Prometheus text format; `/health/summary` for humans |
+| Alerting on error rate, queue depth, DB latency | **Not built.** The metrics exist; nothing scrapes them or pages anyone |
+| CI pipeline | Done — lint, typecheck, tests, `npm audit` and the load test on every push |
+
+Metric labels carry the route **pattern**, never the URL. This is not cosmetic: `req.baseUrl`
+is the matched URL prefix, so a router mounted at `/assets/:id` naively produces one series per
+asset. Unbounded label cardinality is the standard way to take down a metrics backend, and it
+is invisible until the series count explodes — a test asserts no label ever contains an id.
 
 ---
 
@@ -142,15 +159,22 @@ the order: profile, then fix.
 **Ready:** the application. Tenant isolation, authorisation, the data model, the indexes, and
 the read paths are tested and measured rather than asserted.
 
-**Not ready:** the operational envelope. There is no CI, no error tracking, no alerting, no
-backup rehearsal, and rate limiting does not survive horizontal scaling. None of these are
-large; all of them are the difference between "the code works" and "we can run this for
-someone."
+**Ready:** most of the operational envelope. CI runs lint, typecheck, the full suite, `npm
+audit` and the load test on every push. Errors are reported and requests are measured. Rate
+limits survive horizontal scaling. The denormalised assignment cache is reconciled nightly.
 
-The shortest path to a first paying customer, in order:
+**Not ready**, and honestly so:
 
-1. CI running lint, typecheck, tests and `npm audit` on every push.
-2. Sentry, and alerts on error rate and queue depth.
-3. Redis-backed rate limiting — a small change, and it makes the limits mean what they say.
-4. A provisioned Atlas cluster, backups on, and one rehearsed restore.
-5. The assignment reconciliation job.
+1. **No rehearsed backup restore.** No cluster exists yet, so there is nothing to restore from.
+   An untested backup is a hope, not a backup. This is the one remaining item that blocks
+   taking money, and it cannot be closed from a laptop.
+2. **Nothing scrapes the metrics.** The endpoint is there and the numbers are right; no
+   Prometheus polls it and no alert fires on error rate or queue depth. Until then a bad deploy
+   is discovered by a customer.
+3. **No way to change plan.** Enforcement is complete; billing was deferred to manual
+   invoicing for the first cohort.
+4. **Full GDPR erasure needs redaction.** Event summaries embed names for readability, so a
+   deletion request needs those summaries redacted rather than only the source rows removed.
+
+The shortest remaining path to a first paying customer: provision Atlas, turn backups on,
+rehearse one restore, and point a scraper at `/health/metrics` with two alerts on it.

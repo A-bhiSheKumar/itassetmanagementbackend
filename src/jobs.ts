@@ -1,7 +1,12 @@
 import { QUEUE, getJobQueue } from './core/jobs/index.js';
 import { dispatchPending } from './core/events/index.js';
 import { logger } from './core/logging/index.js';
-import { rebuildAllMetrics, scanExpiringWarranties, sweepStorage } from './modules/reports/index.js';
+import {
+  rebuildAllMetrics,
+  scanExpiringWarranties,
+  sweepStorage,
+  reconcileAll,
+} from './modules/reports/index.js';
 import { registerImportJobHandler } from './modules/imports/index.js';
 
 /**
@@ -34,6 +39,9 @@ export function registerJobHandlers(): void {
   );
 
   queue.register(QUEUE.scheduled, async ({ task }) => {
+    // Before the rollup: it counts assigned assets, and reconciling afterwards
+    // would leave the dashboard reporting yesterday's drift for a day.
+    if (task === 'reconcile' || task === 'all') await reconcileAll({ repair: true });
     if (task === 'metrics' || task === 'all') await rebuildAllMetrics();
     if (task === 'warranties' || task === 'all') await scanExpiringWarranties();
     if (task === 'storage-sweep' || task === 'all') await sweepStorage();

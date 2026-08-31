@@ -11,6 +11,8 @@ import {
 import { seedPlans } from './modules/subscriptions/index.js';
 import { initJobQueue } from './core/jobs/index.js';
 import { registerJobHandlers, scheduleRecurringJobs } from './jobs.js';
+import { configureRateLimitStore } from './core/http/rateLimitSetup.js';
+import { warnIfUnconfigured } from './core/telemetry/index.js';
 
 /**
  * API entrypoint.
@@ -51,6 +53,10 @@ async function start(): Promise<void> {
   } else {
     logger.info({ driver: queue.driver }, 'Job queue ready (producer only — run the worker too)');
   }
+
+  // Shared counters, so the published limits mean what they say.
+  await configureRateLimitStore();
+  warnIfUnconfigured();
 
   const app = createApp();
   const server: Server = app.listen(env.PORT, () => {

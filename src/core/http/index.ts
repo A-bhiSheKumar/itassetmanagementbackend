@@ -10,7 +10,9 @@ export {
 export {
   rateLimit,
   limits,
-  rateLimitStore,
+  setRateLimitStore,
+  currentRateLimitStore,
   type RateLimitOptions,
   type RateLimitStore,
 } from './middleware/rateLimit.middleware.js';
+export { RedisRateLimitStore } from './middleware/redisRateLimitStore.js';

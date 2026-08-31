@@ -20,7 +20,7 @@ export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
 
 export interface JobPayloads {
   outbox: { limit?: number };
-  scheduled: { task: 'metrics' | 'warranties' | 'storage-sweep' | 'all' };
+  scheduled: { task: 'metrics' | 'warranties' | 'storage-sweep' | 'reconcile' | 'all' };
   imports: { importJobId: string; tenantId: string };
   exports: { exportJobId: string; tenantId: string };
 }

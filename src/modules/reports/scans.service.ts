@@ -147,6 +147,11 @@ export async function sweepStorage(): Promise<{ tenants: number; swept: number }
 
 /** Everything the nightly maintenance window runs. */
 export async function runNightlyScans(): Promise<void> {
+  const { reconcileAll } = await import('./reconciliation.service.js');
+
+  // Reconciliation first: the rollup counts assigned assets, and reconciling
+  // afterwards would leave the dashboard reporting yesterday's drift for a day.
+  await reconcileAll({ repair: true });
   await rebuildAllMetrics();
   await scanExpiringWarranties();
   await sweepStorage();

@@ -8,15 +8,15 @@ import { isTest } from '../../../config/index.js';
  *
  * Per IP, per user, and per TENANT — the last of these is what stops one noisy
  * customer degrading everyone else's service. A single global limit protects
- * the server and nobody else; a per-IP limit alone is defeated by a tenant
- * behind one NAT.
+ * the server and nobody else; a per-IP limit alone is defeated by a whole
+ * company behind one NAT.
  *
  * ── Storage ────────────────────────────────────────────────────────────────
- * In memory here, which is correct for a single process and wrong for several:
- * with N replicas each enforces its own counter, so the effective limit is N
- * times what it says. Redis-backed counters are the fix and the interface below
- * is shaped for it; until then the numbers are deliberately conservative and
- * the auth limits — the ones that actually matter — are the tightest.
+ * The store is swappable. In memory by default, which is correct for a single
+ * process and wrong for several — with N replicas each enforces its own count,
+ * so a limit of 300 is really 300×N and it drifts every time the deployment
+ * scales. `configureRateLimitStore()` points it at Redis, so the number in the
+ * config is the number that is enforced.
  */
 
 interface Window {
@@ -64,7 +64,11 @@ class MemoryStore implements RateLimitStore {
   }
 }
 
-const store: RateLimitStore = new MemoryStore();
+let store: RateLimitStore = new MemoryStore();
+
+export function setRateLimitStore(next: RateLimitStore): void {
+  store = next;
+}
 
 export interface RateLimitOptions {
   windowMs: number;
@@ -136,4 +140,6 @@ export const limits = {
   invitations: rateLimit({ name: 'invite', by: 'tenant', windowMs: 86_400_000, limit: 50 }),
 };
 
-export { store as rateLimitStore };
+export function currentRateLimitStore(): RateLimitStore {
+  return store;
+}
