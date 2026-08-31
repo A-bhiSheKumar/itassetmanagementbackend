@@ -1,0 +1,62 @@
+{
+  "name": "itam-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "dev:ephemeral": "tsx scripts/dev-ephemeral.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "start:worker": "node dist/worker.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "lint:boundaries": "depcruise src --config .dependency-cruiser.cjs",
+    "format": "prettier --write \"**/*.{ts,json,md}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "dependencies": {
+    "argon2": "^0.41.1",
+    "bullmq": "^5.28.1",
+    "compression": "^1.7.5",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.9.2",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "ulid": "^2.3.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/compression": "^1.7.5",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^6.0.2",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "dependency-cruiser": "^16.9.0",
+    "eslint": "^9.17.0",
+    "mongodb-memory-server": "^10.1.2",
+    "pino-pretty": "^13.0.0",
+    "prettier": "^3.4.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

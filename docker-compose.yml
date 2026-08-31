@@ -1,0 +1,45 @@
+# Local infrastructure. `npm run infra:up`
+#
+# Mongo runs as a single-node REPLICA SET, not a standalone. Multi-document
+# transactions are load-bearing in this system (ADR-005: assignment exclusivity,
+# import commit batches) and a standalone mongod silently does not support them.
+services:
+  mongo:
+    image: mongo:7
+    container_name: itam-mongo
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    ports: ['27017:27017']
+    volumes: ['mongo-data:/data/db']
+    healthcheck:
+      test: mongosh --quiet --eval "rs.status().ok || rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok"
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    container_name: itam-redis
+    ports: ['6379:6379']
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes: ['redis-data:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: itam-minio
+    command: ['server', '/data', '--console-address', ':9001']
+    ports: ['9000:9000', '9001:9001']
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes: ['minio-data:/data']
+
+volumes:
+  mongo-data:
+  redis-data:
+  minio-data:
