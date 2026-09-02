@@ -1,8 +1,22 @@
+/**
+ * Wiring, not domain logic.
+ *
+ * This implements the `PermissionResolver` port that the auth middleware
+ * defines, and to do it it needs BOTH identity (who is this) and memberships
+ * (what may they do here). That makes it composition: the one place allowed to
+ * know about two modules at once.
+ *
+ * It used to live in `modules/identity`, which forced identity to depend on
+ * memberships. That was fine until memberships needed a user's name for its own
+ * listing — at which point the two modules pointed at each other and the
+ * boundary was gone. Sitting above both, nothing is circular and each module
+ * keeps one direction of dependency.
+ */
 import { ulid } from 'ulid';
-import type { PermissionResolver } from '../../core/http/middleware/authenticate.middleware.js';
-import { getContext, runWithContext } from '../../core/context/index.js';
-import { MembershipModel, permissionsForMembership } from '../memberships/index.js';
-import { UserModel } from './user.model.js';
+import type { PermissionResolver } from '../core/http/middleware/authenticate.middleware.js';
+import { getContext, runWithContext } from '../core/context/index.js';
+import { MembershipModel, permissionsForMembership } from '../modules/memberships/index.js';
+import { UserModel } from '../modules/identity/index.js';
 
 /**
  * Wires the auth middleware to the data layer.

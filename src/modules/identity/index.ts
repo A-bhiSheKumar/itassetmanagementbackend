@@ -12,4 +12,3 @@ export {
   changePassword,
 } from './identity.service.js';
 export { authRoutes, meRoutes } from './auth.routes.js';
-export { permissionResolver } from './permissionResolver.js';

@@ -19,3 +19,9 @@ export {
   type InviteResult,
 } from './membership.service.js';
 export { membershipRoutes } from './membership.routes.js';
+export {
+  setUserDirectory,
+  userDirectory,
+  type UserDirectory,
+  type UserIdentity,
+} from './userDirectory.js';

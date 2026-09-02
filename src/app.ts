@@ -11,7 +11,11 @@ import {
   authenticate,
   limits,
 } from './core/http/index.js';
-import { permissionResolver } from './modules/identity/index.js';
+import { permissionResolver } from './composition/permissionResolver.js';
+import { wireUserDirectory } from './composition/userDirectory.js';
+
+// Composition: modules declare ports, this is where implementations meet them.
+wireUserDirectory();
 import { apiRouter } from './routes.js';
 import { registerEventSubscribers } from './subscribers.js';
 import { requestMetrics } from './core/telemetry/index.js';

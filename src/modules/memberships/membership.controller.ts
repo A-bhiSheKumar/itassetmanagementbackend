@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { ok, created, noContent } from '../../core/http/index.js';
 import { assertWithinLimit, incrementUsage } from '../subscriptions/index.js';
 import { isProduction } from '../../config/index.js';
-import { UserModel } from '../identity/index.js';
+import { userDirectory } from './userDirectory.js';
 import {
   listMembers,
   inviteMember,
@@ -24,11 +24,7 @@ export async function index(_req: Request, res: Response): Promise<void> {
    *
    * One batched lookup, never one per row.
    */
-  const users = await UserModel.find({ _id: { $in: members.map((m) => m.userId) } })
-    .select('name email')
-    .lean();
-
-  const identity = new Map(users.map((u) => [String(u._id), { name: u.name, email: u.email }]));
+  const identity = await userDirectory().namesFor(members.map((m) => m.userId as string));
 
   ok(
     res,
