@@ -240,6 +240,36 @@ describe('assign, return, transfer', () => {
     const held = await as(request(server()).get(`/api/v1/assignments?assigneeId=${adaId}&status=active`));
     expect(held.body.data).toHaveLength(2);
   });
+
+  it('names the asset and the assignee, so the list is readable', async () => {
+    const asset = await makeAsset();
+    await as(
+      request(server()).post(`/api/v1/assets/${asset.body.data.id}/assign`).send({ assigneeId: adaId }),
+    ).expect(201);
+
+    const held = await as(request(server()).get(`/api/v1/assignments?assigneeId=${adaId}&status=active`));
+    const row = held.body.data[0];
+
+    // A list of ids is not a screen anyone can use. The alternatives are worse:
+    // resolving client-side ships the asset collection to the browser, and
+    // denormalising onto the assignment makes every rename a backfill.
+    expect(row.assigneeName).toBe('Ada Okafor');
+    expect(row.assetName).toBe(asset.body.data.name);
+    expect(row.assetTag).toBe(asset.body.data.assetTag);
+  });
+
+  it('says nothing rather than guessing when an assignee is gone', async () => {
+    const asset = await makeAsset();
+    await as(request(server()).post(`/api/v1/assets/${asset.body.data.id}/assign`).send({ assigneeId: adaId }));
+
+    // The person is erased; the assignment record survives, as it must for the
+    // audit trail. The name simply cannot be resolved any more.
+    await as(request(server()).delete(`/api/v1/people/${adaId}`));
+
+    const held = await as(request(server()).get(`/api/v1/assignments?assigneeId=${adaId}`));
+    expect(held.status).toBe(200);
+    expect(held.body.data[0].assigneeName).toBeNull();
+  });
 });
 
 /**

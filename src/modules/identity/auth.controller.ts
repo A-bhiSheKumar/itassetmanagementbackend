@@ -104,6 +104,15 @@ export async function login(req: Request, res: Response): Promise<void> {
             slug: tenant.slug,
             status: tenant.status,
             membershipStatus: m.status as string,
+            /*
+             * The tenant's timezone travels with the session.
+             *
+             * Every date the console renders is formatted in it. Without it the
+             * client has to guess, and the guess was a hardcoded
+             * 'Europe/London' — which quietly shifts "due today" by a day for
+             * anyone who is not in the UK.
+             */
+            timezone: tenant.settings?.timezone ?? 'Europe/London',
           }
         : null;
     }),
@@ -259,7 +268,12 @@ export async function me(_req: Request, res: Response): Promise<void> {
       memberships.map(async (m) => {
         const tenant = await findTenantById(m.tenantId as string);
         return tenant
-          ? { tenantId: String(tenant._id), name: tenant.name, slug: tenant.slug }
+          ? {
+              tenantId: String(tenant._id),
+              name: tenant.name,
+              slug: tenant.slug,
+              timezone: tenant.settings?.timezone ?? 'Europe/London',
+            }
           : null;
       }),
     )
