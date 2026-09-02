@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { list } from '../../core/http/index.js';
 import { AuditLogModel } from './auditLog.model.js';
+import { UserModel } from '../identity/index.js';
 
 export async function index(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as {
@@ -24,6 +25,23 @@ export async function index(req: Request, res: Response): Promise<void> {
     .limit(query.limit)
     .lean();
 
+  /*
+   * Actor names, resolved at read time.
+   *
+   * ADR-013 is explicit that the row stores a REFERENCE and never a copied
+   * name — a name copied into an audit row is a name that goes stale and
+   * cannot be redacted. Resolving it on the way out keeps both properties: the
+   * log stays a set of references, and the screen still says who.
+   *
+   * A deleted user resolves to null, and the client says so. That is the
+   * correct answer for an append-only log that outlives its actors.
+   */
+  const actors = await UserModel.find({ _id: { $in: [...new Set(rows.map((r) => r.actorId))] } })
+    .select('name')
+    .lean();
+
+  const actorNames = new Map(actors.map((u) => [String(u._id), u.name]));
+
   list(
     res,
     rows.map((r) => ({
@@ -34,6 +52,7 @@ export async function index(req: Request, res: Response): Promise<void> {
       entityId: r.entityId,
       // A reference, never a name — see ADR-013.
       actorId: r.actorId,
+      actorName: actorNames.get(r.actorId as string) ?? null,
       actorType: r.actorType,
       outcome: r.outcome,
       changes: r.changes,
