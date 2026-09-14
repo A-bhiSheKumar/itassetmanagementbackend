@@ -29,7 +29,7 @@ export function createApp(): Express {
 
   // Behind a load balancer, so req.ip reflects the client rather than the proxy.
   // Rate limiting and audit logging both depend on this being correct.
-  app.set('trust proxy', 1);
+  app.set('trust proxy', env.TRUST_PROXY_HOPS);
   app.disable('x-powered-by');
 
   app.use(

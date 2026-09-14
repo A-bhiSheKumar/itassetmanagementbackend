@@ -50,6 +50,26 @@ export const envSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+
+  /**
+   * How many proxies sit between the client and Express, for `req.ip`.
+   *
+   * Per-IP rate limits and the audit log both depend on it. Behind CloudFront
+   * and API Gateway the right value must be confirmed against real traffic —
+   * too low and every request appears to come from one edge address, collapsing
+   * the per-IP limit onto everybody at once.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+
+  /**
+   * MongoDB pool size per process. On Lambda each container serves one request
+   * at a time, so a large pool only multiplies connections against Atlas's
+   * per-tier ceiling; the default drops accordingly.
+   */
+  MONGO_MAX_POOL_SIZE: z.coerce.number().int().min(1).max(100).optional(),
+
+  /** The jobs function to wake after an enqueue, on Lambda. Unset elsewhere. */
+  JOBS_FUNCTION_NAME: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (value.STORAGE_DRIVER === 's3') {
     for (const key of ['S3_BUCKET', 'S3_REGION'] as const) {
@@ -76,9 +96,16 @@ function loadEnv(): Env {
     const issues = parsed.error.issues
       .map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('\n');
+    const message = `Invalid environment configuration:\n${issues}`;
+
+    // On Lambda, throw: exiting the process during init kills the container
+    // with a generic runtime error, while a thrown error is reported with this
+    // message in CloudWatch and marks the invocation failed.
+    if (process.env.AWS_LAMBDA_FUNCTION_NAME) throw new Error(message);
+
     // Deliberately process.stderr, not the logger — the logger depends on config,
     // and this is the one failure that must be readable before anything is wired up.
-    process.stderr.write(`\nInvalid environment configuration:\n${issues}\n\n`);
+    process.stderr.write(`\n${message}\n\n`);
     process.exit(1);
   }
 
@@ -90,3 +117,5 @@ export const env = loadEnv();
 export const isProduction = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 export const isDevelopment = env.NODE_ENV === 'development';
+/** True inside an AWS Lambda runtime. */
+export const isLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);

@@ -23,10 +23,13 @@
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "db:up": "bash scripts/mongo-local.sh up",
-    "db:down": "bash scripts/mongo-local.sh down"
+    "db:down": "bash scripts/mongo-local.sh down",
+    "db:sync": "tsx --env-file-if-exists=.env scripts/db-sync.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "^3.1132.0",
     "@aws-sdk/client-s3": "^3.1132.0",
+    "@aws-sdk/client-secrets-manager": "^3.1132.0",
     "@aws-sdk/s3-presigned-post": "^3.1132.0",
     "@aws-sdk/s3-request-presigner": "^3.1132.0",
     "argon2": "^0.41.1",
@@ -42,10 +45,12 @@
     "mongoose": "^8.9.2",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
+    "serverless-http": "^4.0.0",
     "ulid": "^2.3.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.163",
     "@types/compression": "^1.7.5",
     "@types/cookie-parser": "^1.4.8",
     "@types/cors": "^2.8.17",

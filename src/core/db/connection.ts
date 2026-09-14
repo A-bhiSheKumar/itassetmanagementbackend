@@ -1,5 +1,5 @@
 import mongoose, { model, type Schema } from 'mongoose';
-import { env, isTest } from '../../config/index.js';
+import { env, isTest, isProduction, isLambda } from '../../config/index.js';
 import { logger } from '../logging/index.js';
 import { tenantScopePlugin } from './plugins/tenantScope.plugin.js';
 import { softDeletePlugin } from './plugins/softDelete.plugin.js';
@@ -112,7 +112,27 @@ export interface ConnectOptions {
   uri?: string;
 }
 
-export async function connectDatabase(options: ConnectOptions = {}): Promise<typeof mongoose> {
+let connecting: Promise<typeof mongoose> | null = null;
+
+/**
+ * Connects once per process, and is safe to call on every Lambda invocation.
+ *
+ * A warm container keeps its connection between invocations, so the handler
+ * calls this each time and only the first call in a container does any work.
+ * Concurrent callers share one in-flight connection attempt rather than
+ * opening several.
+ */
+export function connectDatabase(options: ConnectOptions = {}): Promise<typeof mongoose> {
+  if (mongoose.connection.readyState === 1) return Promise.resolve(mongoose);
+  connecting ??= openConnection(options).catch((err) => {
+    // A failed attempt must not be cached, or the container could never recover.
+    connecting = null;
+    throw err;
+  });
+  return connecting;
+}
+
+async function openConnection(options: ConnectOptions): Promise<typeof mongoose> {
   registerGlobalPlugins();
 
   const uri = options.uri ?? env.MONGO_URI;
@@ -141,14 +161,29 @@ export async function connectDatabase(options: ConnectOptions = {}): Promise<typ
   mongoose.connection.on('reconnected', () => logger.info('MongoDB reconnected'));
 
   await mongoose.connect(uri, {
-    // Sized for a single API replica. Tune against real pool-utilisation
-    // metrics before scaling out — an oversized pool exhausts Atlas connections
-    // faster than an undersized one causes queueing.
-    maxPoolSize: isTest ? 5 : 20,
-    minPoolSize: isTest ? 1 : 2,
+    /**
+     * Pool sizing depends on where this runs.
+     *
+     * A long-running API serves many requests concurrently and wants a real
+     * pool. A Lambda container serves ONE request at a time, and every
+     * container holds its own pool against Atlas's per-tier connection limit —
+     * so a pool of 20 across 50 warm containers is 1,000 connections for no
+     * benefit. Overridable with MONGO_MAX_POOL_SIZE once real metrics exist.
+     */
+    maxPoolSize: env.MONGO_MAX_POOL_SIZE ?? (isTest ? 5 : isLambda ? 5 : 20),
+    minPoolSize: isTest ? 1 : isLambda ? 0 : 2,
     serverSelectionTimeoutMS: 8_000,
     socketTimeoutMS: 45_000,
     retryWrites: true,
+    /**
+     * No index builds at startup in production.
+     *
+     * Building indexes on every cold start adds latency to whichever request
+     * woke the container, and a failed build there is only a log line. In
+     * production `npm run db:sync` builds them as a deploy step, where a failure
+     * stops the deploy. Development and tests keep building them automatically.
+     */
+    autoIndex: !isProduction,
   });
 
   logger.info({ db: mongoose.connection.name }, 'MongoDB connected');
@@ -156,6 +191,7 @@ export async function connectDatabase(options: ConnectOptions = {}): Promise<typ
 }
 
 export async function disconnectDatabase(): Promise<void> {
+  connecting = null;
   await mongoose.connection.close();
   logger.info('MongoDB disconnected');
 }

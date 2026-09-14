@@ -1,1 +1,1 @@
-export { env, isProduction, isTest, isDevelopment, type Env } from './env.js';
+export { env, isProduction, isTest, isDevelopment, isLambda, type Env } from './env.js';
