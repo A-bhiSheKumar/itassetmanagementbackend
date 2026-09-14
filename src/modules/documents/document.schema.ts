@@ -20,6 +20,11 @@ export const listDocumentsSchema = {
 
 export const documentIdSchema = { params: strictObject({ id: idSchema }) };
 
+export const downloadDocumentSchema = {
+  params: strictObject({ id: idSchema }),
+  query: strictObject({ as: z.enum(['link']).optional() }),
+};
+
 /** The local-storage stand-ins are authorised by the URL signature, not a token. */
 export const signedUrlSchema = {
   query: strictObject({

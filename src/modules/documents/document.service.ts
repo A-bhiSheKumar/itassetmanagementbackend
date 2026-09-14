@@ -145,6 +145,12 @@ async function reject(record: DocumentRecordDocument, reason: string): Promise<v
   await getStorage().delete(record.storageKey);
 }
 
+export async function findDocument(documentId: string): Promise<DocumentRecordDocument> {
+  const record = await DocumentModel.findById(documentId).exec();
+  if (!record) throw new NotFoundError('Document');
+  return record;
+}
+
 export async function listDocuments(entityType: string, entityId: string) {
   return DocumentModel.find({ entityType, entityId, status: 'ready' })
     .sort({ createdAt: -1 })

@@ -38,9 +38,26 @@ export async function index(req: Request, res: Response): Promise<void> {
 }
 
 export async function download(req: Request, res: Response): Promise<void> {
+  const url = await service.downloadUrl(req.params.id!);
+
+  /*
+   * `?as=link` returns the signed URL instead of redirecting to it.
+   *
+   * The console fetches with a bearer token, and a fetch that follows a
+   * redirect to S3 is a cross-origin request needing CORS on the bucket for a
+   * read the browser could simply navigate to. Handing over the link lets the
+   * browser download straight from storage. A plain link click still gets the
+   * redirect.
+   */
+  if (req.query.as === 'link') {
+    const record = await service.findDocument(req.params.id!);
+    ok(res, { url, fileName: record.fileName, expiresInSeconds: 300 });
+    return;
+  }
+
   // 302 to a short-lived signed URL, issued only after the permission check
   // above has passed. There is no stable URL for a document.
-  res.redirect(302, await service.downloadUrl(req.params.id!));
+  res.redirect(302, url);
 }
 
 export async function destroy(req: Request, res: Response): Promise<void> {

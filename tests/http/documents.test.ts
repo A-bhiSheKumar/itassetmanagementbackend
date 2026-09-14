@@ -305,3 +305,19 @@ describe('the abandoned-upload sweeper', () => {
     expect(swept.remaining).toBe(0);
   });
 });
+
+describe('downloading as a link', () => {
+  it('returns the signed URL as data, for a client that downloads straight from storage', async () => {
+    const { presigned } = await upload('invoice.pdf', PDF);
+    const id = presigned.body.data.documentId;
+
+    const res = await as(request(server()).get(`/api/v1/documents/${id}/download?as=link`));
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.fileName).toBe('invoice.pdf');
+    // And the link itself serves the file as an attachment.
+    const file = await request(server()).get(res.body.data.url);
+    expect(file.status).toBe(200);
+    expect(file.headers['content-disposition']).toContain('attachment');
+  });
+});

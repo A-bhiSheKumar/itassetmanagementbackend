@@ -7,6 +7,7 @@ import {
   presignSchema,
   listDocumentsSchema,
   documentIdSchema,
+  downloadDocumentSchema,
   signedUrlSchema,
 } from './document.schema.js';
 
@@ -46,7 +47,7 @@ documentRoutes.post(
 documentRoutes.get(
   '/:id/download',
   requirePermission('asset:read'),
-  validate(documentIdSchema),
+  validate(downloadDocumentSchema),
   asyncHandler(controller.download),
 );
 
