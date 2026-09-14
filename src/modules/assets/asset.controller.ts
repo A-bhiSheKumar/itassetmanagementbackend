@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import { ok, created, list, noContent } from '../../core/http/index.js';
 import { flattenCustomFields, availableTransitions, AssetTypeModel } from '../catalog/index.js';
 import { assetTimeline } from '../timeline/index.js';
+import { PersonModel, LocationModel } from '../people/index.js';
+import { userDirectory } from '../memberships/index.js';
 import type { AssetDocument } from './asset.model.js';
 import * as service from './asset.service.js';
 import { listAssets, countByState, type AssetFilters } from './asset.repository.js';
@@ -30,6 +32,61 @@ function present(asset: AssetDocument) {
     createdAt: asset.createdAt,
     updatedAt: asset.updatedAt,
   };
+}
+
+/**
+ * Names the current holder of each asset.
+ *
+ * The cached pointer stores ids, which is right for a record and useless for a
+ * screen. The console used to resolve them against the first hundred people it
+ * had loaded — so in any organisation larger than that, holders past the
+ * hundredth showed as "Unknown". One batched lookup per kind, whatever the page
+ * size.
+ */
+async function withHolderNames(assets: AssetDocument[]) {
+  const idsOf = (type: string) => [
+    ...new Set(
+      assets
+        .map((a) => a.currentAssignment)
+        .filter((c): c is NonNullable<typeof c> => Boolean(c) && c!.assigneeType === type)
+        .map((c) => c.assigneeId)
+        .filter((id): id is string => typeof id === 'string'),
+    ),
+  ];
+
+  const [people, locations, parents] = await Promise.all([
+    idsOf('person').length ? PersonModel.find({ _id: { $in: idsOf('person') } }).select('firstName lastName').lean() : [],
+    idsOf('location').length ? LocationModel.find({ _id: { $in: idsOf('location') } }).select('name').lean() : [],
+    idsOf('asset').length ? service.findAssetsByIds(idsOf('asset')) : [],
+  ]);
+
+  const names = new Map<string, string>([
+    ...people.map((p) => [String(p._id), `${p.firstName} ${p.lastName}`] as [string, string]),
+    ...locations.map((l) => [String(l._id), l.name] as [string, string]),
+    ...parents.map((a) => [String(a._id), a.name] as [string, string]),
+  ]);
+
+  return assets.map((asset) => {
+    const presented = present(asset);
+    if (!asset.currentAssignment) return presented;
+
+    // A Mongoose subdocument keeps its fields behind getters, so spreading it
+    // copies nothing — the holder's id vanished from the response until this
+    // converted it to a plain object first.
+    const current = (asset.currentAssignment as unknown as { toObject?: () => Record<string, unknown> }).toObject?.() ??
+      (asset.currentAssignment as unknown as Record<string, unknown>);
+
+    return asset.currentAssignment
+      ? {
+          ...presented,
+          currentAssignment: {
+            ...current,
+            // Null when the holder has since been deleted: the record outlives them.
+            assigneeName: names.get(asset.currentAssignment.assigneeId ?? '') ?? null,
+          },
+        }
+      : presented;
+  });
 }
 
 /**
@@ -89,13 +146,13 @@ export async function index(req: Request, res: Response): Promise<void> {
     cursor: query.cursor,
   });
 
-  list(res, result.items.map(present), {
+  list(res, await withHolderNames(result.items), {
     pagination: { cursor: result.cursor, hasMore: result.hasMore, limit: query.limit },
   });
 }
 
 export async function show(req: Request, res: Response): Promise<void> {
-  ok(res, present(await service.findAsset(req.params.id!)));
+  ok(res, (await withHolderNames([await service.findAsset(req.params.id!)]))[0]);
 }
 
 export async function create(req: Request, res: Response): Promise<void> {
@@ -128,6 +185,13 @@ export async function timeline(req: Request, res: Response): Promise<void> {
 
   const entries = await assetTimeline(String(asset._id), { limit: 100 });
 
+  // Actors are USERS — the people who changed things — not the asset holders in
+  // the people directory. The console had been looking them up among holders,
+  // so nearly every entry read "by Unknown".
+  const actors = await userDirectory().namesFor(
+    [...new Set(entries.map((e) => e.actorId).filter((id): id is string => Boolean(id)))],
+  );
+
   ok(
     res,
     entries.map((e) => ({
@@ -137,6 +201,7 @@ export async function timeline(req: Request, res: Response): Promise<void> {
       summary: e.summary,
       changes: e.changes,
       actorId: e.actorId,
+      actorName: e.actorId ? (actors.get(e.actorId)?.name ?? null) : null,
       actorType: e.actorType,
       comment: e.comment,
       relatedIds: e.relatedIds,

@@ -139,7 +139,8 @@ export async function history(req: Request, res: Response): Promise<void> {
   if (!asset) throw new NotFoundError('Asset');
 
   const rows = await service.assignmentHistory(assetId);
-  ok(res, rows.map(present));
+  // Named, like the list: a chain of custody of ids answers nothing.
+  ok(res, await withNames(rows));
 }
 
 /**

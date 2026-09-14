@@ -380,3 +380,8 @@ export async function restoreAsset(id: string): Promise<AssetDocument> {
   await flushOutbox();
   return restored;
 }
+
+/** Several assets by id, for naming the parent asset something is attached to. */
+export function findAssetsByIds(ids: string[]) {
+  return AssetModel.find({ _id: { $in: ids } }).select('name').lean().exec();
+}

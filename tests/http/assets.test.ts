@@ -559,3 +559,44 @@ describe('creating an asset without a type', () => {
     expect(res.body.error.fields.assetTypeId).toEqual(['Choose an asset type.']);
   });
 });
+
+/**
+ * Names, resolved by the server.
+ *
+ * The console used to resolve holder and actor names itself, against the first
+ * hundred people it loaded — so holders past the hundredth showed as "Unknown",
+ * and timeline actors (users, not asset holders) almost always did.
+ */
+describe('names on asset responses', () => {
+  it('names the current holder on the asset and in the list', async () => {
+    const asset = await makeAsset();
+    await as(request(server()).post(`/api/v1/assets/${asset.body.data.id}/assign`).send({ assigneeId: adaId })).expect(201);
+
+    const one = await as(request(server()).get(`/api/v1/assets/${asset.body.data.id}`));
+    expect(one.body.data.currentAssignment.assigneeName).toBe('Ada Okafor');
+    expect(one.body.data.currentAssignment.assigneeId).toBe(adaId);
+
+    const list = await as(request(server()).get('/api/v1/assets'));
+    const row = list.body.data.find((a: { id: string }) => a.id === asset.body.data.id);
+    expect(row.currentAssignment.assigneeName).toBe('Ada Okafor');
+  });
+
+  it('names every holder in the chain of custody', async () => {
+    const asset = await makeAsset();
+    const id = asset.body.data.id;
+    await as(request(server()).post(`/api/v1/assets/${id}/assign`).send({ assigneeId: adaId })).expect(201);
+    await as(request(server()).post(`/api/v1/assets/${id}/return`).send({})).expect(200);
+
+    const history = await as(request(server()).get(`/api/v1/assets/${id}/assignments`));
+    expect(history.body.data[0].assigneeName).toBe('Ada Okafor');
+  });
+
+  it('names the user who made each change, not a holder', async () => {
+    const asset = await makeAsset();
+    const timeline = await as(request(server()).get(`/api/v1/assets/${asset.body.data.id}/timeline`));
+
+    const created = timeline.body.data.find((e: { type: string }) => e.type === 'asset.created');
+    expect(created.actorName).toBeTruthy();
+    expect(created.actorName).not.toBe('Unknown');
+  });
+});
