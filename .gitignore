@@ -6,3 +6,6 @@ coverage/
 *.log
 .DS_Store
 .storage/
+
+# Local replica-set data from `npm run db:up`.
+.mongo/

@@ -7,8 +7,8 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "dev:worker": "tsx watch src/worker.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "dev:worker": "tsx watch --env-file-if-exists=.env src/worker.ts",
     "dev:ephemeral": "tsx scripts/dev-ephemeral.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
@@ -21,7 +21,9 @@
     "test:watch": "vitest",
     "loadtest": "tsx scripts/loadtest.ts",
     "infra:up": "docker compose up -d",
-    "infra:down": "docker compose down"
+    "infra:down": "docker compose down",
+    "db:up": "bash scripts/mongo-local.sh up",
+    "db:down": "bash scripts/mongo-local.sh down"
   },
   "dependencies": {
     "argon2": "^0.41.1",
