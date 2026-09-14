@@ -14,20 +14,63 @@ function as(req: request.Test): request.Test {
   return req.set('Authorization', `Bearer ${t.accessToken}`);
 }
 
-/** Uploads a file and returns the created import job. */
-async function upload(fileName: string, body: string, entityType = 'asset') {
-  // An asset import must declare its type — it decides the tag prefix, the
-  // applicable custom fields and the lifecycle.
-  const typeParam = entityType === 'asset' ? `&assetTypeId=${laptopTypeId}` : '';
+/**
+ * Uploads a file the way the browser does, and returns the staging response.
+ *
+ * The file goes to storage on a presigned request — never through the import
+ * endpoint, which on Lambda could not accept more than 6 MB — and the import is
+ * then created from the upload's key.
+ */
+async function stageUpload(
+  fileName: string,
+  body: string | Buffer,
+  options: { entityType?: string; assetTypeId?: string | null } = {},
+): Promise<request.Response> {
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const entityType = options.entityType ?? 'asset';
+
+  const presigned = await as(
+    request(server()).post('/api/v1/imports/uploads').send({ fileName, sizeBytes: bytes.length }),
+  );
+  if (presigned.status !== 201) return presigned;
+
+  const { uploadKey, upload } = presigned.body.data;
+  await request(server()).put(upload.url).set('Content-Type', 'application/octet-stream').send(bytes).expect(204);
+
+  // `null` means "deliberately send no type", to exercise that refusal.
+  const assetTypeId =
+    options.assetTypeId === null ? undefined : (options.assetTypeId ?? (entityType === 'asset' ? laptopTypeId : undefined));
 
   return as(
     request(server())
-      .post(
-        `/api/v1/imports?entityType=${entityType}&fileName=${encodeURIComponent(fileName)}${typeParam}`,
-      )
-      .set('Content-Type', 'text/csv')
-      .send(body),
+      .post('/api/v1/imports')
+      .send({ uploadKey, entityType, fileName, ...(assetTypeId ? { assetTypeId } : {}) }),
   );
+}
+
+/** Uploads a file and returns the created import job. */
+function upload(fileName: string, body: string, entityType = 'asset') {
+  return stageUpload(fileName, body, { entityType });
+}
+
+/**
+ * Exports the way the browser does: ask for the file, get a signed link, then
+ * download from storage. The API never returns the file body itself.
+ */
+async function downloadExport(path: string): Promise<{ text: string; link: request.Response; file: request.Response }> {
+  const link = await as(request(server()).get(path));
+  expect(link.status, JSON.stringify(link.body)).toBe(200);
+  // Served as an opaque attachment, so it has to be read as text explicitly.
+  const file = await request(server())
+    .get(link.body.data.url)
+    .buffer(true)
+    .parse((res, done) => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => (data += chunk));
+      res.on('end', () => done(null, data));
+    });
+  return { text: file.body as string, link, file };
 }
 
 function csv(rows: string[][]): string {
@@ -155,14 +198,7 @@ describe('Excel files', () => {
   it('parses a real workbook, including dates and blank rows', async () => {
     const xlsx = await buildWorkbook();
 
-    const created = await as(
-      request(server())
-        .post(
-          `/api/v1/imports?entityType=asset&fileName=assets.xlsx&assetTypeId=${laptopTypeId}`,
-        )
-        .set('Content-Type', 'application/octet-stream')
-        .send(xlsx),
-    );
+    const created = await stageUpload('assets.xlsx', xlsx);
 
     expect(created.status, JSON.stringify(created.body)).toBe(201);
     expect(created.body.data.fileFormat).toBe('xlsx');
@@ -179,14 +215,7 @@ describe('Excel files', () => {
   it('imports a workbook end to end', async () => {
     const xlsx = await buildWorkbook();
 
-    const created = await as(
-      request(server())
-        .post(
-          `/api/v1/imports?entityType=asset&fileName=assets.xlsx&assetTypeId=${laptopTypeId}`,
-        )
-        .set('Content-Type', 'application/octet-stream')
-        .send(xlsx),
-    );
+    const created = await stageUpload('assets.xlsx', xlsx);
 
     const id = created.body.data.id;
 
@@ -210,14 +239,7 @@ describe('Excel files', () => {
   });
 
   it('rejects a file that claims to be xlsx but is not', async () => {
-    const res = await as(
-      request(server())
-        .post(
-          `/api/v1/imports?entityType=asset&fileName=fake.xlsx&assetTypeId=${laptopTypeId}`,
-        )
-        .set('Content-Type', 'application/octet-stream')
-        .send(Buffer.from('this is not a workbook')),
-    );
+    const res = await stageUpload('fake.xlsx', Buffer.from('this is not a workbook'));
 
     expect(res.status).toBe(422);
     expect(res.body.error.message).toContain('Excel');
@@ -476,9 +498,10 @@ describe('the M5 gate: a deliberately messy spreadsheet', () => {
     expect(usage.body.data.usage.assets).toBe(401);
 
     // And a file of just the failures, to fix and re-upload.
-    const errorFile = await as(request(server()).get(`/api/v1/imports/${id}/errors.csv`));
-    expect(errorFile.status).toBe(200);
-    expect(errorFile.headers['content-disposition']).toContain('attachment');
+    // A 50,000-row error report can outgrow a Lambda response, so it comes back
+    // as a signed link to storage rather than as the body.
+    const errorFile = await downloadExport(`/api/v1/imports/${id}/errors.csv`);
+    expect(errorFile.file.headers['content-disposition']).toContain('attachment');
 
     const lines = errorFile.text.trim().split('\n');
     expect(lines).toHaveLength(7); // header + 6 failures
@@ -550,11 +573,12 @@ describe('exports', () => {
       }),
     ).expect(201);
 
-    const res = await as(request(server()).get('/api/v1/exports/asset'));
+    const { link, file, text } = await downloadExport('/api/v1/exports/asset');
+    const res = { text };
 
-    expect(res.status).toBe(200);
-    expect(res.headers['content-type']).toContain('text/csv');
-    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(link.body.data.fileName).toMatch(/^assets-\d{4}-\d{2}-\d{2}\.csv$/);
+    // Served as an attachment from storage, never rendered inline.
+    expect(file.headers['content-disposition']).toContain('attachment');
 
     // Major units, because that is what someone reading a spreadsheet expects.
     expect(res.text).toContain('1299.00');
@@ -572,7 +596,7 @@ describe('exports', () => {
       }),
     ).expect(201);
 
-    const res = await as(request(server()).get('/api/v1/exports/asset'));
+    const res = await downloadExport('/api/v1/exports/asset');
 
     expect(res.text).toContain("'=cmd");
     // The raw formula must never appear at the start of a cell.
@@ -597,7 +621,7 @@ describe('exports', () => {
       }),
     ).expect(201);
 
-    const res = await as(request(server()).get('/api/v1/exports/asset'));
+    const res = await downloadExport('/api/v1/exports/asset');
 
     expect(res.text).toContain('RAM (GB)');
     expect(res.text).toContain('36');
@@ -615,12 +639,7 @@ describe('exports', () => {
 
   it('refuses an asset import that does not say what it is importing', async () => {
     // Otherwise five thousand laptops silently become accessories.
-    const res = await as(
-      request(server())
-        .post('/api/v1/imports?entityType=asset&fileName=assets.csv')
-        .set('Content-Type', 'text/csv')
-        .send(csv([['Name'], ['A laptop']])),
-    );
+    const res = await stageUpload('assets.csv', csv([['Name'], ['A laptop']]), { assetTypeId: null });
 
     expect(res.status).toBe(422);
     expect(res.body.error.fields.assetTypeId).toBeDefined();
@@ -648,7 +667,7 @@ describe('exports', () => {
       }),
     ).expect(201);
 
-    const exported = await as(request(server()).get('/api/v1/exports/asset'));
+    const exported = await downloadExport('/api/v1/exports/asset');
 
     // Skip is the honest strategy here: everything in the file already exists.
     const { validated } = await stage('round-trip.csv', exported.text, {

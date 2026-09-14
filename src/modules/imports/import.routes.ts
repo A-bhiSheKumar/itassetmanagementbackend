@@ -6,6 +6,7 @@ import { limits } from '../../core/http/index.js';
 import * as controller from './import.controller.js';
 import {
   createImportSchema,
+  importUploadSchema,
   targetsSchema,
   mappingSchema,
   importIdSchema,
@@ -32,6 +33,13 @@ importRoutes.get(
 );
 
 importRoutes.get('/', requirePermission('import:run'), asyncHandler(controller.index));
+
+importRoutes.post(
+  '/uploads',
+  requirePermission('import:run'),
+  validate(importUploadSchema),
+  asyncHandler(controller.presignUpload),
+);
 
 // Parsing and staging a file is expensive to serve, so it gets its own budget
 // on top of the standing per-tenant limit.

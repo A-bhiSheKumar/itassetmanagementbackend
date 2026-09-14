@@ -25,6 +25,8 @@ export const signedUrlSchema = {
   query: strictObject({
     key: z.string().min(1).max(400),
     expires: z.string().regex(/^\d+$/),
+    /** Upload links only: the signed size cap. */
+    max: z.string().regex(/^\d+$/).optional(),
     signature: z.string().min(1).max(200),
     name: z.string().max(200).optional(),
   }),

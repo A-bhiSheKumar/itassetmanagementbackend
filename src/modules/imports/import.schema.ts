@@ -1,8 +1,24 @@
 import { z } from 'zod';
 import { strictObject, idSchema } from '../../core/validation/index.js';
 
+/** Step 1a: reserve a place in storage for the spreadsheet. */
+export const importUploadSchema = {
+  body: strictObject({
+    fileName: z.string().trim().min(1).max(200),
+    sizeBytes: z.number().int().positive(),
+  }),
+};
+
+/**
+ * Step 1b: stage the uploaded file.
+ *
+ * The file is NOT in this request. It was uploaded straight to storage and is
+ * named by `uploadKey` — on Lambda a request body cannot exceed 6 MB, and a
+ * real estate's spreadsheet can.
+ */
 export const createImportSchema = {
-  query: strictObject({
+  body: strictObject({
+    uploadKey: z.string().min(1).max(400),
     entityType: z.enum(['asset', 'person']),
     fileName: z.string().trim().min(1).max(200),
     // Required for asset imports; the service rejects it if absent, with a

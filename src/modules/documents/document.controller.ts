@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { ok, created, noContent } from '../../core/http/index.js';
 import { NotFoundError, ValidationError } from '../../core/errors/index.js';
-import { getStorage, LocalStorageAdapter } from '../../core/storage/index.js';
+import { getStorage, LocalStorageAdapter, attachmentDisposition } from '../../core/storage/index.js';
 import { formatBytes } from '../../shared/format.js';
 import type { DocumentRecordDocument } from './document.model.js';
 import * as service from './document.service.js';
@@ -60,16 +60,52 @@ export async function localUpload(req: Request, res: Response): Promise<void> {
   const storage = getStorage();
   if (!(storage instanceof LocalStorageAdapter)) throw new NotFoundError('Route');
 
-  const { key, expires, signature } = req.query as Record<string, string>;
+  const { key, expires, signature, max } = req.query as Record<string, string>;
+  const maxBytes = Number(max ?? 0);
 
-  if (!key || !storage.verify(key, Number(expires), signature ?? '')) {
+  if (!key || !maxBytes || !storage.verify(key, Number(expires), signature ?? '', maxBytes)) {
     throw new ValidationError('That upload link is not valid or has expired.', {
       signature: ['Invalid.'],
     });
   }
 
+  /*
+   * Streamed with a hard cap, the way S3 enforces a POST policy.
+   *
+   * This used to buffer the entire request with no limit at all, so anyone
+   * holding a valid link could send any number of bytes into the API's memory.
+   * The cap is part of the signature, so it cannot be edited out of the URL.
+   */
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let received = 0;
+  let tooLarge = false;
+
+  for await (const chunk of req) {
+    received += (chunk as Buffer).length;
+
+    if (received > maxBytes) {
+      tooLarge = true;
+      // Nothing past the cap is kept. The remainder is drained rather than the
+      // socket cut, so the client gets a readable 422 instead of "socket hang
+      // up" — but only up to a ceiling, beyond which a client still sending is
+      // not uploading a file by mistake.
+      if (received > maxBytes + 1024 * 1024) {
+        req.destroy();
+        return;
+      }
+      continue;
+    }
+
+    chunks.push(chunk as Buffer);
+  }
+
+  if (tooLarge) {
+    throw new ValidationError('That file is larger than the upload allows.', { sizeBytes: ['Too large.'] });
+  }
+
+  if (received === 0) {
+    throw new ValidationError('No file was received.', { file: ['Empty upload.'] });
+  }
 
   await storage.write(key, Buffer.concat(chunks));
   noContent(res);
@@ -91,6 +127,6 @@ export async function localDownload(req: Request, res: Response): Promise<void> 
   // Always an attachment, never inline: an inline render of an attacker-
   // supplied file executes in our origin.
   res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `attachment; filename="${(name ?? 'download').replace(/"/g, '')}"`);
+  res.setHeader('Content-Disposition', attachmentDisposition(name ?? 'download'));
   res.send(body);
 }

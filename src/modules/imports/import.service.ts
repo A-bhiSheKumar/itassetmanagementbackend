@@ -1,4 +1,5 @@
 import { NotFoundError, ValidationError } from '../../core/errors/index.js';
+import { getStorage, buildTransientKey, extensionOf } from '../../core/storage/index.js';
 import { getContext } from '../../core/context/index.js';
 import { logger } from '../../core/logging/index.js';
 import { resolveEntitlements, getUsage } from '../subscriptions/index.js';
@@ -37,6 +38,83 @@ export interface CreateImportInput {
  * Parsing happens up front so an unreadable file fails immediately rather than
  * after the user has configured a mapping for it.
  */
+/**
+ * Larger than any realistic asset register; the row limit in the parser is the
+ * tighter bound anyway. Enforced by storage itself on upload, not just here.
+ */
+export const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
+
+const IMPORT_EXTENSIONS = new Set(['csv', 'xlsx']);
+
+/** Step 1a: a presigned upload for the spreadsheet, straight to storage. */
+export async function presignImportUpload(input: { fileName: string; sizeBytes: number }) {
+  const extension = extensionOf(input.fileName);
+
+  if (!IMPORT_EXTENSIONS.has(extension)) {
+    throw new ValidationError('Import a .csv or .xlsx file.', { fileName: ['That file type cannot be imported.'] });
+  }
+
+  if (input.sizeBytes > MAX_IMPORT_BYTES) {
+    throw new ValidationError(`Import files must be under ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it and import in parts.`, {
+      sizeBytes: ['Too large.'],
+    });
+  }
+
+  const key = buildTransientKey({ kind: 'imports', tenantId: getContext()!.tenantId!, fileName: input.fileName });
+  const upload = await getStorage().presignUpload({
+    key,
+    contentType: 'application/octet-stream',
+    maxBytes: MAX_IMPORT_BYTES,
+  });
+
+  return { uploadKey: key, upload };
+}
+
+/**
+ * Step 1b: stage an uploaded spreadsheet.
+ *
+ * The upload key comes from the client, so it is checked against this tenant
+ * before anything is read. Without that check it is a way to pull another
+ * organisation's uploaded file into your own import preview.
+ *
+ * The uploaded object is kept until staging succeeds: if the user has to fix
+ * the asset type and try again, they should not have to upload the file again.
+ * Storage's lifecycle rule removes whatever is left.
+ */
+export async function createImportFromUpload(input: {
+  uploadKey: string;
+  entityType: 'asset' | 'person';
+  fileName: string;
+  assetTypeId?: string;
+}): Promise<ImportJobDocument> {
+  const tenantId = getContext()!.tenantId!;
+
+  // Same answer as a key that does not exist (ADR-015): no confirmation that
+  // another tenant's upload is there.
+  if (!input.uploadKey.startsWith(`transient/imports/t/${tenantId}/`)) {
+    throw new NotFoundError('Upload');
+  }
+
+  const storage = getStorage();
+  const content = await storage.read(input.uploadKey);
+
+  if (!content || content.length === 0) {
+    throw new ValidationError('That upload did not complete. Choose the file again.', { file: ['Nothing was received.'] });
+  }
+
+  const job = await createImport({
+    entityType: input.entityType,
+    fileName: input.fileName,
+    content,
+    assetTypeId: input.assetTypeId,
+  });
+
+  // The rows are staged in the database now; the file has done its job.
+  await storage.delete(input.uploadKey).catch((err) => logger.warn({ err }, 'Could not remove a staged import upload'));
+
+  return job;
+}
+
 export async function createImport(input: CreateImportInput): Promise<ImportJobDocument> {
   /**
    * An asset import must say WHAT it is importing.

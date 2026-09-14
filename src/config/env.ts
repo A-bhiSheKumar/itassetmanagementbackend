@@ -9,7 +9,7 @@ import { z } from 'zod';
  */
 const durationString = z.string().regex(/^\d+[smhd]$/, 'expected a duration like 15m, 24h, 30d');
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
@@ -31,15 +31,40 @@ const envSchema = z.object({
         .filter(Boolean),
     ),
 
+  /**
+   * Where uploaded files live. `local` writes under `.storage/` for development
+   * and tests; `s3` is Amazon S3 (or MinIO locally, via S3_ENDPOINT).
+   */
+  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  /** Optional: only for an S3-compatible store that is not AWS, such as MinIO. */
   S3_ENDPOINT: z.string().optional(),
-  S3_REGION: z.string().default('us-east-1'),
-  S3_BUCKET: z.string().default('itam-documents'),
+  S3_REGION: z.string().optional(),
+  S3_BUCKET: z.string().optional(),
+  /**
+   * Optional on AWS, where Lambda's IAM role supplies credentials. Only set for
+   * MinIO or a laptop — a long-lived key in production is one more secret to leak.
+   */
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: z
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+}).superRefine((value, ctx) => {
+  if (value.STORAGE_DRIVER === 's3') {
+    for (const key of ['S3_BUCKET', 'S3_REGION'] as const) {
+      if (!value[key]) ctx.addIssue({ code: 'custom', path: [key], message: `${key} is required when STORAGE_DRIVER=s3` });
+    }
+  }
+
+  /*
+   * Refused, not warned. On Lambda the filesystem is read-only outside /tmp and
+   * wiped between containers, so a production deploy on the local driver would
+   * accept uploads and lose every one of them — with no error anywhere.
+   */
+  if (value.NODE_ENV === 'production' && value.STORAGE_DRIVER !== 's3') {
+    ctx.addIssue({ code: 'custom', path: ['STORAGE_DRIVER'], message: 'must be s3 in production' });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

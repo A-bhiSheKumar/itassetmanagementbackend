@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import { ok, created, accepted } from '../../core/http/index.js';
 import { ValidationError } from '../../core/errors/index.js';
+import { getContext } from '../../core/context/index.js';
+import { getStorage, buildTransientKey } from '../../core/storage/index.js';
 import { definitionsFor } from '../catalog/index.js';
 import type { ImportJobDocument } from './importJob.model.js';
 import * as service from './import.service.js';
@@ -26,35 +28,16 @@ function present(job: ImportJobDocument) {
   };
 }
 
-/**
- * Step 1: upload.
- *
- * The file arrives as a raw body rather than multipart — one file, no fields,
- * and multipart parsing is a dependency and an attack surface we do not need
- * for that.
- */
+/** Step 1a: where to upload the spreadsheet. The file never passes through here. */
+export async function presignUpload(req: Request, res: Response): Promise<void> {
+  created(res, await service.presignImportUpload(req.body as { fileName: string; sizeBytes: number }));
+}
+
+/** Step 1b: stage the file that was uploaded to storage. */
 export async function create(req: Request, res: Response): Promise<void> {
-  const query = req.query as unknown as {
-    entityType: 'asset' | 'person';
-    fileName: string;
-    assetTypeId?: string;
-  };
-
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const content = Buffer.concat(chunks);
-
-  if (content.length === 0) {
-    throw new ValidationError('No file was received.', { file: ['Empty upload.'] });
-  }
-
-  const job = await service.createImport({
-    entityType: query.entityType,
-    fileName: query.fileName,
-    content,
-    assetTypeId: query.assetTypeId,
-  });
-
+  const job = await service.createImportFromUpload(
+    req.body as { uploadKey: string; entityType: 'asset' | 'person'; fileName: string; assetTypeId?: string },
+  );
   created(res, present(job));
 }
 
@@ -150,11 +133,29 @@ function sendCsv(res: Response, fileName: string, body: string): void {
   res.send(body);
 }
 
+/**
+ * Hands back a download link instead of the file.
+ *
+ * An export of a large estate — 50,000 assets, or the error report for a
+ * 50,000-row import — can run past Lambda's 6 MB response limit, and would fail
+ * as a bare 5xx exactly when a customer most needs the file. Writing it to
+ * storage and returning a short-lived signed link has no size ceiling, and the
+ * browser downloads it straight from storage. A lifecycle rule on `transient/`
+ * removes it afterwards.
+ */
+async function sendViaStorage(res: Response, fileName: string, body: string): Promise<void> {
+  const key = buildTransientKey({ kind: 'exports', tenantId: getContext()!.tenantId!, fileName });
+  const storage = getStorage();
+
+  await storage.write(key, Buffer.from(body, 'utf8'), 'text/csv; charset=utf-8');
+  ok(res, { url: await storage.presignDownload(key, fileName), fileName, expiresInSeconds: 300 });
+}
+
 export async function errorFile(req: Request, res: Response): Promise<void> {
   const id = req.params.id!;
   await service.findImport(id); // 404s for another tenant before any work.
 
-  sendCsv(res, `import-${id}-errors.csv`, await exports.exportImportErrors(id));
+  await sendViaStorage(res, `import-${id}-errors.csv`, await exports.exportImportErrors(id));
 }
 
 export function template(req: Request, res: Response): void {
@@ -171,5 +172,5 @@ export async function exportEntities(req: Request, res: Response): Promise<void>
       ? await exports.exportAssets(req.query as never)
       : await exports.exportPeople();
 
-  sendCsv(res, `${entityType}s-${date}.csv`, body);
+  await sendViaStorage(res, `${entityType}s-${date}.csv`, body);
 }
