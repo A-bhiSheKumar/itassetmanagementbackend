@@ -10,10 +10,8 @@ export const QUEUE = {
   outbox: 'outbox',
   /** Metric rollups, warranty notices, storage sweeps. */
   scheduled: 'scheduled',
-  /** Staged import pipeline — M5. Concurrency 1 per tenant. */
+  /** Import commits. Serialised per tenant by a lock, parallel across tenants. */
   imports: 'imports',
-  /** Async report and export builds — M5. */
-  exports: 'exports',
 } as const;
 
 export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
@@ -22,7 +20,6 @@ export interface JobPayloads {
   outbox: { limit?: number };
   scheduled: { task: 'metrics' | 'warranties' | 'storage-sweep' | 'reconcile' | 'all' };
   imports: { importJobId: string; tenantId: string };
-  exports: { exportJobId: string; tenantId: string };
 }
 
 export interface JobOptions {
@@ -30,11 +27,10 @@ export interface JobOptions {
   attempts?: number;
   /** Exponential backoff base, in ms. */
   backoffMs?: number;
-  /** Repeat forever on this interval. */
-  everyMs?: number;
   /**
-   * Collapses duplicates. Two "rebuild metrics for tenant X" jobs queued in the
-   * same minute should be one job, not two.
+   * Collapses duplicates while one is outstanding. Two "commit import X" jobs
+   * queued by a double click should be one job, not two. Recurring work is not
+   * a repeating job any more — see `SCHEDULES` in src/jobs.ts.
    */
   jobId?: string;
   delayMs?: number;

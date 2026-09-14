@@ -50,6 +50,7 @@ Each entry: the decision, what was rejected, and the cost of being wrong.
 **Decision.** BullMQ/Redis; imports, exports, reports, notifications, integrations and rollups are all jobs. API and worker share one codebase, two entrypoints.
 **Rejected.** Synchronous processing "until it becomes a problem" — it becomes a problem at the first customer with a real spreadsheet, and by then the code assumes a request context.
 **Cost of being wrong.** Low upfront cost, avoids a certain future rewrite.
+**Superseded in part by ADR-017 (15 September 2026).** "Everything async is a job" stands. The BullMQ/Redis implementation does not: production moved to Lambda, which has neither Redis nor a process that stays running. The `JobQueue` interface was kept, so no producer changed.
 
 ### ADR-010 — Cursor pagination by default
 **Decision.** Cursor over `{tenantId, createdAt, _id}` for all large collections; offset capped at page 100 for small admin tables.
@@ -85,3 +86,8 @@ Each entry: the decision, what was rejected, and the cost of being wrong.
 **Decision.** REST with uniform conventions, OpenAPI generated from Zod schemas.
 **Rejected.** GraphQL — the flexibility mostly benefits third-party consumers we don't have yet, and it makes per-field authorization, rate limiting, caching and query-cost control substantially harder in a multi-tenant product.
 **Cost of being wrong.** Low — a GraphQL layer can be added over the same services later if a customer integration demands it.
+
+### ADR-017 — Serverless production target, and a MongoDB job queue
+**Decision.** Production runs on MongoDB Atlas, AWS Lambda (API and a jobs function), S3 for every uploaded file, CloudFront for the web app and `/api/*`, and Resend for email — the stack `lms_backend` already runs. Background jobs are documents in MongoDB, claimed with an atomic `findOneAndUpdate` lease, retried with jittered exponential backoff, deduplicated through a partial unique index and dead-lettered after their attempts. Recurring work is a table of schedules claimed once per period, so EventBridge retries and overlapping runners cannot run it twice. Cross-process locks (the per-tenant import lock) and the rate limits that must be exact are MongoDB documents too.
+**Rejected.** BullMQ on managed Redis — its workers need an always-on process, so it would add a second compute platform and a second datastore to secure and pay for. SQS — durable, but more AWS surface and a local stand-in for development, for guarantees the job table already provides at this scale.
+**Cost of being wrong.** Moderate and contained. Throughput is bounded by claim queries on one collection, which is ample for scheduled scans, imports and email; if a future workload outgrows it, a different driver slots in behind the unchanged `JobQueue` interface.

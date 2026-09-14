@@ -29,6 +29,10 @@ const GLOBAL_MODELS: Record<string, string> = {
   RefreshToken: 'Issued at login, before a tenant has been selected.',
   Tenant: 'Defines the tenant, so it cannot be scoped by one.',
   Plan: 'Platform-wide commercial reference data.',
+  Job: 'Claimed by a runner before any tenant context exists; tenant-bound jobs carry tenantId in the payload and re-enter it with runAsSystem.',
+  ScheduleRun: 'Platform schedules (nightly scans, outbox sweep) span every tenant.',
+  Lock: 'Taken before a tenant context exists; the key itself encodes the tenant where it matters.',
+  RateLimitHit: 'Counts requests by IP, user or tenant, often before authentication has resolved a tenant.',
 };
 
 /**

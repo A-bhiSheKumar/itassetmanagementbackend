@@ -38,7 +38,6 @@ async function main(): Promise<void> {
 
   process.env.NODE_ENV ??= 'development';
   process.env.LOG_LEVEL ??= 'error';
-  process.env.REDIS_URL ??= 'redis://127.0.0.1:6399';
   process.env.JWT_ACCESS_SECRET ??= 'loadtest-access-secret-at-least-32-characters';
   process.env.JWT_REFRESH_SECRET ??= 'loadtest-refresh-secret-at-least-32-characters';
 

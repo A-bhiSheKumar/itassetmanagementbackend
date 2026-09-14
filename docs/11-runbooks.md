@@ -71,7 +71,7 @@ Work outward from the data:
    event — which is logged as `INDEX BUILD FAILED`. Grep for it.
 3. **Is it one tenant?** Group request durations by `tenantId`. The per-tenant rate limit exists
    for exactly this, and its counters are shared across replicas, so the configured limit is the
-   enforced one (see [10-production-readiness.md](10-production-readiness.md) §3). If Redis is
+   enforced one (see [10-production-readiness.md](10-production-readiness.md) §3). If MongoDB is
    unreachable the limiter fails open and logs `Rate-limit store unavailable` — check for that
    line before concluding the limit is not working.
 4. **Is it the dashboard?** It reads a daily rollup, so it should be tens of milliseconds
@@ -87,32 +87,35 @@ Anything an order of magnitude above those is a regression, not load.
 
 Symptoms: the dashboard goes stale, warranty notices stop, imports sit at `committing`.
 
-1. **Is a worker running?** The API is a producer only — it never consumes. A deployment that
-   scaled the API but not the worker leaves the queue filling with nothing draining.
-2. **Is Redis reachable?** In production an unreachable Redis is a fatal boot error, so a
-   worker that will not start is a strong signal.
-3. **Check queue depth** — exported per queue, so this is a graph rather than a guess:
+Jobs are documents in MongoDB (ADR-017), so every question below is a query.
+
+1. **Is anything draining?** In production the jobs Lambda runs every minute; check its
+   invocations and errors in CloudWatch. Locally, `npm run dev` drains in-process.
+2. **What is waiting, running and dead?**
    ```
-   curl -s localhost:3000/api/v1/health/metrics | grep itam_queue_
+   db.jobs.aggregate([{ $group: { _id: { queue: "$queue", status: "$status" }, n: { $sum: 1 } } }])
    ```
    Depth alone proves nothing: a queue is healthy at 200 if it is draining and broken at 20 if
-   it is not. Compare two scrapes a minute apart, or look at `QueueBacklogGrowing`, which fires
-   only when depth is both high and still climbing.
-
-   Straight from Redis, if the API is the thing that is down:
+   it is not. Run it twice a minute apart.
+3. **Is something stuck on a lease?** A `running` job with `lockedUntil` in the past belongs to
+   a runner that died. It is reclaimed automatically on the next drain; if it is not, nothing
+   is draining (see 1).
    ```
-   redis-cli llen bull:imports:wait
-   redis-cli zcard bull:scheduled:delayed
-   redis-cli zcard bull:imports:failed
+   db.jobs.find({ status: "running", lockedUntil: { $lt: new Date() } })
    ```
-4. **Dead-lettered jobs** are logged as `Job dead-lettered` after five attempts, counted as
-   `itam_events_total{name="jobs_dead_lettered"}`, and left in the queue's failed set. They need
-   a human — that is the point of the limit. A dead letter means that work has silently NOT
-   happened, so decide per job whether to replay it or accept the loss.
+4. **Dead-lettered jobs** are `status: "failed"`, with the reason in `lastError`, kept for 30
+   days. A dead letter means that work has silently NOT happened. To replay one after fixing
+   the cause:
+   ```
+   db.jobs.updateOne({ _id: ObjectId("…") }, { $set: { status: "pending", live: true, attempts: 0, runAt: new Date() } })
+   ```
+5. **A schedule that never runs:** `db.scheduleruns.find()` shows when each last ran. A
+   `lastRunAt` in the future (a clock skew during testing, for example) blocks that schedule
+   until then — correct it by hand.
 
 **Events are recoverable.** Anything a request could not deliver inline stays `pending` in the
-outbox and the worker drains it every five seconds. Nothing is lost by a worker being down for
-a while; it just arrives late.
+outbox and the minute-by-minute sweep retries it. Nothing is lost by the jobs function being
+down for a while; it just arrives late.
 
 ---
 

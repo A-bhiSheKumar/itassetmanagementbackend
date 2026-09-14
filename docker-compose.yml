@@ -17,18 +17,6 @@ services:
       retries: 20
       start_period: 5s
 
-  redis:
-    image: redis:7-alpine
-    container_name: itam-redis
-    ports: ['6379:6379']
-    command: ['redis-server', '--appendonly', 'yes']
-    volumes: ['redis-data:/data']
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   minio:
     image: minio/minio:latest
     container_name: itam-minio
@@ -41,5 +29,4 @@ services:
 
 volumes:
   mongo-data:
-  redis-data:
   minio-data:

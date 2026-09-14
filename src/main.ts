@@ -1,6 +1,6 @@
 import type { Server } from 'node:http';
 import { createApp } from './app.js';
-import { env } from './config/index.js';
+import { env, isDevelopment } from './config/index.js';
 import { logger } from './core/logging/index.js';
 import { registerEventSubscribers } from './subscribers.js';
 import {
@@ -10,9 +10,9 @@ import {
 } from './core/db/index.js';
 import { seedPlans } from './modules/subscriptions/index.js';
 import { initJobQueue } from './core/jobs/index.js';
-import { registerJobHandlers, scheduleRecurringJobs } from './jobs.js';
-import { configureRateLimitStore } from './core/http/rateLimitSetup.js';
+import { registerJobHandlers, startLocalScheduler } from './jobs.js';
 import { warnIfUnconfigured } from './core/telemetry/index.js';
+import { setRateLimitStore, MongoRateLimitStore } from './core/http/index.js';
 
 /**
  * API entrypoint.
@@ -32,30 +32,28 @@ async function start(): Promise<void> {
   await seedPlans();
 
   /**
-   * The API PRODUCES jobs; in production it never consumes them.
+   * Where jobs run.
    *
-   * With BullMQ that separation is essential — otherwise every API replica is
-   * also a worker and each scheduled scan runs once per replica.
+   * In development this process runs them too, so `npm run dev` is the whole
+   * app — an import queued from the browser actually commits. In production
+   * the API only ever PRODUCES: on Lambda the jobs function drains the queue,
+   * and a long-running API that also consumed would run each job wherever it
+   * happened to land.
    *
-   * The inline driver only ever appears when Redis is absent, which cannot
-   * happen in production (initJobQueue throws there). In that case there IS no
-   * separate worker process, so the API consumes its own jobs — otherwise
-   * `npm run dev` would queue an import that nothing ever runs, which looks
-   * exactly like a bug.
+   * Running `npm run dev:worker` alongside is harmless: jobs are claimed
+   * atomically, so two runners never take the same one.
    */
   const queue = await initJobQueue();
 
-  if (queue.driver === 'inline') {
+  if (isDevelopment) {
     registerJobHandlers();
     await queue.start();
-    await scheduleRecurringJobs();
-    logger.warn('No Redis: this process is also acting as the worker. Development only.');
-  } else {
-    logger.info({ driver: queue.driver }, 'Job queue ready (producer only — run the worker too)');
+    startLocalScheduler();
+    logger.info('Development: this process also runs background jobs.');
   }
 
-  // Shared counters, so the published limits mean what they say.
-  await configureRateLimitStore();
+  // Counts that hold across processes, for the limits that must be exact.
+  setRateLimitStore('shared', new MongoRateLimitStore());
   warnIfUnconfigured();
 
   const app = createApp();

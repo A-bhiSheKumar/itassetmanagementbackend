@@ -3,7 +3,7 @@ import { connectDatabase, disconnectDatabase } from './core/db/index.js';
 import { dispatchPending } from './core/events/index.js';
 import { initJobQueue, getJobQueue } from './core/jobs/index.js';
 import { registerEventSubscribers } from './subscribers.js';
-import { registerJobHandlers, scheduleRecurringJobs } from './jobs.js';
+import { registerJobHandlers, startLocalScheduler } from './jobs.js';
 
 /**
  * Worker entrypoint (ADR-009).
@@ -13,8 +13,9 @@ import { registerJobHandlers, scheduleRecurringJobs } from './jobs.js';
  * request context (runAsSystem), so the tenant-scope plugin applies to them
  * exactly as it does to a request.
  *
- * Only the worker registers handlers. The API produces jobs but never consumes
- * them, which is what stops a scheduled scan running once per API replica.
+ * A long-running runner for when you want one — a production-like local run, or
+ * a deployment that is not Lambda. On Lambda the jobs function replaces this
+ * process entirely: EventBridge is the clock and each invocation drains.
  */
 async function start(): Promise<void> {
   await connectDatabase();
@@ -24,7 +25,8 @@ async function start(): Promise<void> {
   const queue = await initJobQueue();
   registerJobHandlers();
   await queue.start();
-  await scheduleRecurringJobs();
+  const stopScheduler = startLocalScheduler();
+  process.once('beforeExit', stopScheduler);
 
   logger.info({ driver: queue.driver }, 'Worker started');
 

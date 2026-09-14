@@ -390,6 +390,12 @@ Additional controls: extension + magic-byte allowlist, SVG rejected (or served `
 
 ## 10. Background jobs `[D7]`
 
+> **Superseded by ADR-017 (15 September 2026).** Production moved to AWS Lambda with MongoDB
+> Atlas and no Redis. Jobs, schedules, cross-process locks and exact rate limits are MongoDB
+> documents; the queue interface below is unchanged. References to Redis elsewhere in this
+> document — caching, permission caching, readiness checks — describe the original plan and
+> were never built.
+
 **BullMQ on Redis**, from day one. Queues:
 
 | Queue | Jobs | Notes |

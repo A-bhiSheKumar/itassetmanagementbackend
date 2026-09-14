@@ -1,4 +1,4 @@
-import { QUEUE, getJobQueue } from './core/jobs/index.js';
+import { QUEUE, getJobQueue, claimSchedule } from './core/jobs/index.js';
 import { dispatchPending } from './core/events/index.js';
 import { logger } from './core/logging/index.js';
 import {
@@ -14,20 +14,15 @@ import { registerImportJobHandler } from './modules/imports/index.js';
  *
  * Lives here rather than in core/jobs because core is framework and must not
  * import a module — the same rule that puts event subscribers in subscribers.ts.
- *
- * Handlers are registered by the WORKER; the API only ever produces. That split
- * is what stops a job running on six API replicas at once.
  */
-
-const OUTBOX_DRAIN_MS = 5_000;
-const NIGHTLY_MS = 60 * 60_000;
 
 export function registerJobHandlers(): void {
   const queue = getJobQueue();
 
   /**
-   * Drains anything an HTTP request could not deliver inline — a subscriber
-   * that failed, or a process that died between commit and flush.
+   * Retries anything an HTTP request could not deliver inline — a subscriber
+   * that failed, or a process that died between commit and flush. Happy-path
+   * delivery already happens inside the request, so this is a sweeper.
    */
   queue.register(
     QUEUE.outbox,
@@ -35,35 +30,99 @@ export function registerJobHandlers(): void {
       const delivered = await dispatchPending(limit ?? 100);
       if (delivered > 0) logger.debug({ delivered }, 'Outbox drained');
     },
-    1, // Single consumer: concurrent drains would fight over the same rows.
+    // Single consumer: concurrent drains would fight over the same rows.
+    { concurrency: 1 },
   );
 
-  queue.register(QUEUE.scheduled, async ({ task }) => {
-    // Before the rollup: it counts assigned assets, and reconciling afterwards
-    // would leave the dashboard reporting yesterday's drift for a day.
-    if (task === 'reconcile' || task === 'all') await reconcileAll({ repair: true });
-    if (task === 'metrics' || task === 'all') await rebuildAllMetrics();
-    if (task === 'warranties' || task === 'all') await scanExpiringWarranties();
-    if (task === 'storage-sweep' || task === 'all') await sweepStorage();
-  });
+  queue.register(
+    QUEUE.scheduled,
+    async ({ task }) => {
+      // Before the rollup: it counts assigned assets, and reconciling afterwards
+      // would leave the dashboard reporting yesterday's drift for a day.
+      if (task === 'reconcile' || task === 'all') await reconcileAll({ repair: true });
+      if (task === 'metrics' || task === 'all') await rebuildAllMetrics();
+      if (task === 'warranties' || task === 'all') await scanExpiringWarranties();
+      if (task === 'storage-sweep' || task === 'all') await sweepStorage();
+    },
+    // A cross-tenant sweep can take a while on a large estate. The lease stays
+    // under Lambda's 15-minute ceiling with room to finish cleanly.
+    { concurrency: 1, leaseMs: 14 * 60_000 },
+  );
 
-  // Import commits: several tenants in parallel, but each tenant's own imports
-  // serialised behind a lock — see modules/imports/import.queue.ts.
   registerImportJobHandler();
 }
 
 /**
- * Queues the recurring work.
+ * Recurring work, as data.
  *
- * `jobId` collapses duplicates, so a second worker starting does not create a
- * second repeating schedule — which is how a nightly scan quietly becomes a
- * twice-nightly one.
+ * Not repeating jobs: a schedule that lives in the queue is a schedule that
+ * duplicates the moment a second runner registers it. Instead each entry is
+ * claimed per period in the database (`claimSchedule`), so it runs once no
+ * matter how many runners tick — EventBridge every minute in production, the
+ * local worker every thirty seconds.
  */
-export async function scheduleRecurringJobs(): Promise<void> {
-  const queue = getJobQueue();
+export const SCHEDULES = [
+  {
+    name: 'outbox-sweep',
+    // EventBridge's floor is one minute. The sweep is only a retry path, so a
+    // minute of latency on a failed delivery is the right trade.
+    intervalMs: 60_000,
+    enqueue: () => getJobQueue().add(QUEUE.outbox, { limit: 200 }, { jobId: 'outbox-sweep' }),
+  },
+  {
+    name: 'nightly-scans',
+    /**
+     * Daily. The constant this replaced was called NIGHTLY_MS and was set to
+     * one hour, so "nightly" scans ran twenty-four times a day. Harmless only
+     * because each is idempotent; wasteful on a large estate, and misleading to
+     * anyone reading the runbook. The dashboard has a manual rebuild for anyone
+     * who needs fresher figures.
+     */
+    intervalMs: 24 * 60 * 60_000,
+    enqueue: () => getJobQueue().add(QUEUE.scheduled, { task: 'all' }, { jobId: 'nightly-scans' }),
+  },
+] as const;
 
-  await queue.add(QUEUE.outbox, { limit: 100 }, { everyMs: OUTBOX_DRAIN_MS, jobId: 'outbox-drain' });
-  await queue.add(QUEUE.scheduled, { task: 'all' }, { everyMs: NIGHTLY_MS, jobId: 'nightly-scans' });
+/**
+ * Queues every schedule that is due. Safe to call from any number of places.
+ * Returns the names that this caller won.
+ */
+export async function runDueSchedules(now = new Date()): Promise<string[]> {
+  const started: string[] = [];
 
-  logger.info({ driver: queue.driver }, 'Recurring jobs scheduled');
+  for (const schedule of SCHEDULES) {
+    try {
+      if (await claimSchedule(schedule.name, schedule.intervalMs, now)) {
+        await schedule.enqueue();
+        started.push(schedule.name);
+      }
+    } catch (err) {
+      // One broken schedule must not stop the others from being considered.
+      logger.error({ err, schedule: schedule.name }, 'Could not start a scheduled job');
+    }
+  }
+
+  // The minute-by-minute outbox sweep is routine; only the rarer work is worth
+  // an info line, or the log becomes a heartbeat nobody reads.
+  const notable = started.filter((name) => name !== 'outbox-sweep');
+  if (notable.length > 0) logger.info({ started: notable }, 'Scheduled work queued');
+  else if (started.length > 0) logger.debug({ started }, 'Scheduled work queued');
+  return started;
+}
+
+/**
+ * Ticks `runDueSchedules` on an interval, for a long-running local process.
+ *
+ * Production has no equivalent in code: EventBridge is the clock there. The
+ * claim in the database makes it safe for this and EventBridge — or two local
+ * processes — to tick at once.
+ */
+export function startLocalScheduler(intervalMs = 30_000): () => void {
+  const tick = () => void runDueSchedules().catch((err) => logger.error({ err }, 'Scheduler tick failed'));
+
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+
+  return () => clearInterval(timer);
 }

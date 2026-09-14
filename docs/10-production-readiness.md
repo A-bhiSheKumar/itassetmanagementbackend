@@ -43,19 +43,26 @@ is already public — it is a floor, not vulnerability management.
 Three dimensions are enforced: per IP, per user, per tenant. The per-tenant one is the
 important one, because it is what stops a single noisy customer degrading everyone else.
 
-**Counters are shared across replicas** (`RedisRateLimitStore`), so the number in the config
-is the number that is enforced — previously, with in-memory counters and N replicas, the
-effective limit was N times what it said and it drifted every time the deployment scaled.
-`INCR` and `PEXPIRE` run in one Lua script: two round trips would race, and a crash between
-them would leave a key with no expiry, locking that client out permanently.
+**The limits that must be exact are counted in MongoDB** (`MongoRateLimitStore`): sign-in,
+registration, invitation acceptance, invitations sent, and imports/exports. On Lambda every
+concurrent invocation is its own container with its own memory, so only a shared count is a
+real limit. Each window is one document whose id includes the window start, so a hit is a
+single atomic upsert-and-increment, and each document expires with its window.
+
+The sign-in limiter was previously `express-rate-limit` with its default in-memory store — a
+count per process, which on Lambda would have been a count per container. Per-account lockout
+on the user record sits behind it either way.
+
+The general per-request ceilings (per IP, user and tenant) stay in memory: they blunt a runaway
+client, and API Gateway throttling is the gate for raw volume. A database write on every
+request is a poor price for a best-effort ceiling.
 
 Two deliberate trades:
 
 - **Fixed window, not sliding.** A fixed window permits up to 2× the limit across a boundary.
-  It bounds sustained load, which is what actually threatens the service, and the limits where
-  a burst would matter — login, invitation — are small enough that 2× is still small.
-- **Fails open, loudly.** If Redis is unreachable the local per-replica counter still applies
-  and one error line is logged. Rate limiting protects availability; it must not become the
+  The limits where a burst would matter are small enough that 2× is still small.
+- **Fails open, loudly.** If the database cannot count a hit, one error line is logged and the
+  request proceeds. Rate limiting protects availability; it must not become the
   thing that removes it.
 
 ---

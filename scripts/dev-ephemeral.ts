@@ -18,7 +18,6 @@ const replSet = await MongoMemoryReplSet.create({
 
 process.env.MONGO_URI = replSet.getUri();
 process.env.NODE_ENV ??= 'development';
-process.env.REDIS_URL ??= 'redis://127.0.0.1:6379';
 process.env.JWT_ACCESS_SECRET ??= 'ephemeral-access-secret-at-least-32-characters';
 process.env.JWT_REFRESH_SECRET ??= 'ephemeral-refresh-secret-at-least-32-characters';
 

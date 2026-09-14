@@ -12,7 +12,9 @@ export {
   limits,
   setRateLimitStore,
   currentRateLimitStore,
+  MemoryRateLimitStore,
   type RateLimitOptions,
   type RateLimitStore,
+  type RateLimitWindow,
 } from './middleware/rateLimit.middleware.js';
-export { RedisRateLimitStore } from './middleware/redisRateLimitStore.js';
+export { MongoRateLimitStore, RateLimitHitModel } from './middleware/mongoRateLimitStore.js';

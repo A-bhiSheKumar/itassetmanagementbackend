@@ -1,6 +1,6 @@
 # Backend — IT Asset Management API
 
-Node · Express · TypeScript · MongoDB (Mongoose) · Redis · BullMQ
+Node · Express · TypeScript · MongoDB (Mongoose) · built for AWS Lambda, S3, CloudFront and Resend
 
 Architecture and rationale: [`docs/`](docs/). Read
 [`02-architecture.md`](docs/02-architecture.md) before adding a module,
@@ -16,7 +16,7 @@ The React client lives in a separate repository: [itassetmanagementfrontend](htt
 ```bash
 npm install
 cp .env.example .env        # the defaults work against docker compose
-npm run infra:up            # Mongo (replica set), Redis, MinIO
+npm run infra:up            # Mongo (replica set) and MinIO, via Docker
 npm run dev                 # API   → http://localhost:4000
 npm run dev:worker          # Worker (same codebase, different entrypoint)
 ```
@@ -114,10 +114,6 @@ model, so not one had a `tenantId` and every query ran unscoped. Plugins now reg
 side effect of importing `core/db`, every model goes through `defineModel()`, and
 `tests/security/modelScoping.test.ts` asserts the invariant directly.
 
-**BullMQ rejects `:` in a custom job id** — it is their Redis key separator, and the error
-(`Custom Id cannot contain :`) only appears when Redis is actually reachable. The queue layer
-normalises it now, so callers can use whatever id reads well.
-
 **`errors` is a RESERVED mongoose path.** It is where mongoose stores ValidationError
 entries, so a validation failure on the document silently overwrites whatever you put there.
 Mongoose warns about it; the warning is right. The import row stores `issues` and the API
@@ -207,28 +203,33 @@ documents for 300 results. That single word was 90 ms of the dashboard's 103 ms.
 
 ## Background jobs
 
-`core/jobs` is one interface with two drivers:
+Jobs are documents in MongoDB (ADR-017). There is no Redis.
 
-| | BullMQ | Inline |
+| | Mongo | Inline |
 |---|---|---|
-| When | Redis reachable | Redis absent (dev), or under test |
-| Durability | Survives a restart | Lost on exit |
-| Retries | Exponential backoff, then dead-letter | None |
-| Deduplication by job id | Yes, across restarts | No |
-| Distribution | Shared across replicas | This process only |
+| When | Development and production | Tests only |
+| Durability | Survives restarts and Lambda timeouts | Runs the moment it is queued |
+| Retries | Jittered exponential backoff, then dead-letter | None |
+| Deduplication | Partial unique index while outstanding | — |
+| Concurrency | Atomic claims, safe across any number of runners | — |
 
-**The fallback is never silent in production.** Running jobs in-process on every API
-replica would mean each scheduled scan firing N times with no durability, so an unreachable
-Redis in production is a fatal boot error rather than a degraded mode.
+**`drain()` is the whole contract.** On Lambda the jobs function calls it every minute (and
+after an enqueue kick). Locally, `npm run dev` runs the same claim-and-run step in polling
+loops, so the dev server runs its own jobs; `npm run dev:worker` is optional and safe to run
+alongside, because two runners can never claim the same job.
 
-**Only the worker registers handlers.** `main.ts` initialises the queue as a producer and
-stops there. If the API also consumed, every replica would be a worker.
+**Leases, not locks.** A claimed job carries `lockedUntil`. A runner that dies stops renewing,
+the lease lapses and the next drain reclaims the job — counted as an attempt, so a job that
+crashes its runner still dead-letters instead of looping forever.
 
-Verified against a real Redis: retries backing off across attempts, deduplication by job id
-holding across a process restart, and the production boot refusing to start without it. The
-committed tests use the inline driver, because a job that runs on shared infrastructure at an
-unpredictable moment cannot be asserted on — and a suite that needs external services is one
-people stop running.
+**Recurring work is claimed, not repeated.** `SCHEDULES` in `src/jobs.ts` lists each schedule
+and its interval; `claimSchedule` stamps the run atomically, so EventBridge retries, two local
+processes or an overlapping invocation still run each schedule once per period.
+
+The committed tests run the Mongo driver against the test replica set — duplicate collapse,
+retry and dead-letter, lapsed-lease recovery, deferral without spending an attempt, two
+runners draining the same four jobs exactly once, and the time budget. Request-queued jobs in
+the HTTP tests use the inline driver so their effects are visible when the response returns.
 
 Queues: `outbox` (drains events a request could not flush), `scheduled` (rollups, warranty
 notices, storage sweeps), `imports` (staged commits) and `exports`.

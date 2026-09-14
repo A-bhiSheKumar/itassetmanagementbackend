@@ -7,32 +7,33 @@ import { isTest } from '../../../config/index.js';
  * Rate limiting on three independent dimensions (docs/04-api-design.md §8).
  *
  * Per IP, per user, and per TENANT — the last of these is what stops one noisy
- * customer degrading everyone else's service. A single global limit protects
- * the server and nobody else; a per-IP limit alone is defeated by a whole
- * company behind one NAT.
+ * customer degrading everyone else's service. A per-IP limit alone is defeated
+ * by a whole company behind one NAT.
  *
- * ── Storage ────────────────────────────────────────────────────────────────
- * The store is swappable. In memory by default, which is correct for a single
- * process and wrong for several — with N replicas each enforces its own count,
- * so a limit of 300 is really 300×N and it drifts every time the deployment
- * scales. `configureRateLimitStore()` points it at Redis, so the number in the
- * config is the number that is enforced.
+ * ── Two stores, chosen per limit ──────────────────────────────────────────
+ * SHARED (MongoDB) where the count has to be right: sign-in, invitations,
+ * imports and exports. On Lambda every concurrent invocation has its own
+ * memory, so only a shared count is a real limit there.
+ *
+ * LOCAL (memory) for the general per-request ceilings. Those exist to blunt a
+ * runaway client, and API Gateway's throttling is the real gate for raw volume;
+ * a database write on every request would cost more than it protects.
  */
 
-interface Window {
+export interface RateLimitWindow {
   count: number;
   resetAt: number;
 }
 
 export interface RateLimitStore {
-  hit(key: string, windowMs: number): Window;
+  hit(key: string, windowMs: number): Promise<RateLimitWindow>;
 }
 
-class MemoryStore implements RateLimitStore {
-  private readonly windows = new Map<string, Window>();
+export class MemoryRateLimitStore implements RateLimitStore {
+  private readonly windows = new Map<string, RateLimitWindow>();
   private lastSweep = Date.now();
 
-  hit(key: string, windowMs: number): Window {
+  async hit(key: string, windowMs: number): Promise<RateLimitWindow> {
     const now = Date.now();
     this.sweep(now);
 
@@ -49,10 +50,8 @@ class MemoryStore implements RateLimitStore {
   }
 
   /**
-   * Drops expired windows periodically.
-   *
-   * Without this the map grows one entry per distinct key forever — which for a
-   * per-IP limit is one entry per client that has ever connected.
+   * Drops expired windows periodically. Without this the map grows one entry
+   * per distinct key forever — for a per-IP limit, one per client ever seen.
    */
   private sweep(now: number): void {
     if (now - this.lastSweep < 60_000) return;
@@ -64,10 +63,19 @@ class MemoryStore implements RateLimitStore {
   }
 }
 
-let store: RateLimitStore = new MemoryStore();
+const stores: Record<'local' | 'shared', RateLimitStore> = {
+  local: new MemoryRateLimitStore(),
+  // Replaced at startup by the MongoDB store; memory until then, so a limiter
+  // used before configuration still works rather than throwing.
+  shared: new MemoryRateLimitStore(),
+};
 
-export function setRateLimitStore(next: RateLimitStore): void {
-  store = next;
+export function setRateLimitStore(kind: 'local' | 'shared', next: RateLimitStore): void {
+  stores[kind] = next;
+}
+
+export function currentRateLimitStore(kind: 'local' | 'shared'): RateLimitStore {
+  return stores[kind];
 }
 
 export interface RateLimitOptions {
@@ -76,6 +84,8 @@ export interface RateLimitOptions {
   /** Which dimension to count on. */
   by: 'ip' | 'user' | 'tenant';
   name: string;
+  store?: 'local' | 'shared';
+  message?: string;
 }
 
 function keyFor(req: Request, by: RateLimitOptions['by']): string | null {
@@ -87,40 +97,45 @@ function keyFor(req: Request, by: RateLimitOptions['by']): string | null {
 }
 
 export function rateLimit(options: RateLimitOptions): RequestHandler {
+  const kind = options.store ?? 'local';
+
   return (req: Request, res: Response, next: NextFunction) => {
     // Supertest issues every request from one address, so an IP limit would
-    // make test order significant. The auth-specific limits are asserted
-    // separately with the store driven directly.
+    // make test order significant. The stores are asserted on directly instead.
     if (isTest) return next();
 
     const dimension = keyFor(req, options.by);
 
-    // No key means the dimension does not apply to this request — an
-    // unauthenticated call has no user or tenant. Another limiter covers it.
+    // No key means the dimension does not apply — an unauthenticated call has
+    // no user or tenant. Another limiter covers it.
     if (!dimension) return next();
 
     const key = `${options.name}:${options.by}:${dimension}`;
-    const window = store.hit(key, options.windowMs);
 
-    const remaining = Math.max(0, options.limit - window.count);
-    const resetSeconds = Math.ceil((window.resetAt - Date.now()) / 1000);
+    stores[kind]
+      .hit(key, options.windowMs)
+      .then((window) => {
+        const remaining = Math.max(0, options.limit - window.count);
+        const resetSeconds = Math.max(0, Math.ceil((window.resetAt - Date.now()) / 1000));
 
-    res.setHeader('RateLimit-Limit', options.limit);
-    res.setHeader('RateLimit-Remaining', remaining);
-    res.setHeader('RateLimit-Reset', resetSeconds);
+        res.setHeader('RateLimit-Limit', options.limit);
+        res.setHeader('RateLimit-Remaining', remaining);
+        res.setHeader('RateLimit-Reset', resetSeconds);
 
-    if (window.count > options.limit) {
-      res.setHeader('Retry-After', resetSeconds);
+        if (window.count > options.limit) {
+          res.setHeader('Retry-After', resetSeconds);
+          next(
+            new AppError(429, ErrorCode.RATE_LIMITED, options.message ?? 'Too many requests. Try again shortly.', {
+              details: { limit: options.limit, windowMs: options.windowMs, retryAfterSeconds: resetSeconds },
+            }),
+          );
+          return;
+        }
 
-      next(
-        new AppError(429, ErrorCode.RATE_LIMITED, 'Too many requests. Try again shortly.', {
-          details: { limit: options.limit, windowMs: options.windowMs, retryAfterSeconds: resetSeconds },
-        }),
-      );
-      return;
-    }
-
-    next();
+        next();
+      })
+      // A store that throws fails open — see MongoRateLimitStore.
+      .catch(() => next());
   };
 }
 
@@ -128,18 +143,30 @@ export function rateLimit(options: RateLimitOptions): RequestHandler {
  * The standing limits.
  *
  * Deliberately generous for ordinary use and tight where abuse is cheap:
- * exports and imports are expensive to serve, and invitations are a spam
- * vector that costs us deliverability rather than CPU.
+ * sign-in is where credential stuffing lands, exports and imports are expensive
+ * to serve, and invitations are a spam vector that costs deliverability.
  */
 export const limits = {
   perUser: rateLimit({ name: 'api', by: 'user', windowMs: 60_000, limit: 300 }),
   perTenant: rateLimit({ name: 'api', by: 'tenant', windowMs: 60_000, limit: 1_000 }),
   perIp: rateLimit({ name: 'api', by: 'ip', windowMs: 60_000, limit: 600 }),
 
-  heavy: rateLimit({ name: 'heavy', by: 'tenant', windowMs: 3_600_000, limit: 20 }),
-  invitations: rateLimit({ name: 'invite', by: 'tenant', windowMs: 86_400_000, limit: 50 }),
-};
+  /**
+   * Sign-in, registration and invitation acceptance, per address.
+   *
+   * A second layer: per-account lockout on the user record already stops
+   * guessing one account's password. This stops one address walking through
+   * many accounts. Shared, or it would be a limit per Lambda container.
+   */
+  credentials: rateLimit({
+    name: 'auth',
+    by: 'ip',
+    windowMs: 15 * 60_000,
+    limit: 10,
+    store: 'shared',
+    message: 'Too many attempts. Try again in a few minutes.',
+  }),
 
-export function currentRateLimitStore(): RateLimitStore {
-  return store;
-}
+  heavy: rateLimit({ name: 'heavy', by: 'tenant', windowMs: 3_600_000, limit: 20, store: 'shared' }),
+  invitations: rateLimit({ name: 'invite', by: 'tenant', windowMs: 86_400_000, limit: 50, store: 'shared' }),
+};

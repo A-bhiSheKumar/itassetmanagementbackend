@@ -1,4 +1,5 @@
-import { QUEUE, getJobQueue } from '../../core/jobs/index.js';
+import { QUEUE, getJobQueue, DeferJob } from '../../core/jobs/index.js';
+import { acquireLock, releaseLock } from '../../core/locks/index.js';
 import { runAsSystem } from '../../core/context/index.js';
 import { logger } from '../../core/logging/index.js';
 import { ImportJobModel } from './importJob.model.js';
@@ -22,32 +23,24 @@ import { commitImport } from './import.service.js';
  * which would serialise every tenant behind whichever one uploaded first.
  */
 
-const LOCK_TTL_MS = 30 * 60_000;
+/**
+ * Longer than any commit can run on Lambda (15 minutes), so a live run always
+ * finishes inside its lock; a dead one frees the tenant within the TTL.
+ */
+const LOCK_TTL_MS = 16 * 60_000;
 
-interface TenantLock {
-  tenantId: string;
-  importJobId: string;
-  acquiredAt: Date;
-}
+/** How long an import waits before checking the tenant's lock again. */
+const LOCK_RETRY_MS = 15_000;
 
-const locks = new Map<string, TenantLock>();
-
-function acquireLock(tenantId: string, importJobId: string): boolean {
-  const held = locks.get(tenantId);
-
-  // A stale lock — from a worker that died mid-run — must not block the tenant
-  // forever. The TTL is generous enough that it cannot expire under a live run.
-  if (held && Date.now() - held.acquiredAt.getTime() < LOCK_TTL_MS) {
-    return held.importJobId === importJobId;
-  }
-
-  locks.set(tenantId, { tenantId, importJobId, acquiredAt: new Date() });
-  return true;
-}
-
-function releaseLock(tenantId: string, importJobId: string): void {
-  if (locks.get(tenantId)?.importJobId === importJobId) locks.delete(tenantId);
-}
+/**
+ * The lock is a MongoDB document, not a `Map`.
+ *
+ * It used to live in process memory, which never serialised imports across two
+ * workers and, on Lambda, would serialise nothing at all: every concurrent
+ * invocation is its own container with its own empty `Map`. That would reopen
+ * exactly the duplicate-creation race the lock exists to close.
+ */
+const lockKey = (tenantId: string) => `import-commit:${tenantId}`;
 
 export async function queueImportCommit(importJobId: string, tenantId: string): Promise<void> {
   await getJobQueue().add(
@@ -68,16 +61,14 @@ export function registerImportJobHandler(): void {
   getJobQueue().register(
     QUEUE.imports,
     async ({ importJobId, tenantId }) => {
-      if (!acquireLock(tenantId, importJobId)) {
-        logger.info({ importJobId, tenantId }, 'Another import is running for this tenant; deferring');
-        // Re-queued rather than failed: the user asked for this and it will run
-        // as soon as the tenant's current import finishes.
-        await getJobQueue().add(
-          QUEUE.imports,
-          { importJobId, tenantId },
-          { jobId: `import:${importJobId}:retry:${Date.now()}`, delayMs: 10_000 },
-        );
-        return;
+      // The holder is the import itself, so a retried job re-enters its own
+      // lock instead of waiting on itself.
+      const holder = await acquireLock(lockKey(tenantId), LOCK_TTL_MS, `import:${importJobId}`);
+
+      if (!holder) {
+        // Deferred, not failed: the user asked for this, and it runs as soon as
+        // the tenant's current import finishes — without spending an attempt.
+        throw new DeferJob(LOCK_RETRY_MS, 'Another import is running for this tenant');
       }
 
       try {
@@ -100,10 +91,14 @@ export function registerImportJobHandler(): void {
 
         throw err;
       } finally {
-        releaseLock(tenantId, importJobId);
+        await releaseLock(lockKey(tenantId), holder);
       }
     },
-    // Several tenants at once; the lock keeps each tenant's own serial.
-    3,
+    {
+      // Several tenants at once; the lock keeps each tenant's own serial.
+      concurrency: 3,
+      // Must outlast the longest commit, or a slow import is claimed twice.
+      leaseMs: LOCK_TTL_MS,
+    },
   );
 }
