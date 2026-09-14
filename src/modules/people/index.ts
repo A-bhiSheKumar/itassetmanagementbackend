@@ -16,13 +16,12 @@ export {
   deactivatePerson,
   deletePerson,
   scopeFilter,
+  listOrgUnits,
+  createOrgUnit,
+  updateOrgUnit,
+  deleteOrgUnit,
   type PersonInput,
   type ListPeopleOptions,
 } from './people.service.js';
 export { subtreeIds } from './hierarchy.js';
-export {
-  peopleRoutes,
-  departmentRoutes,
-  locationRoutes,
-  costCentreRoutes,
-} from './people.routes.js';
+export { peopleRoutes } from './people.routes.js';

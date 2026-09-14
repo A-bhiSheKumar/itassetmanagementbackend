@@ -66,6 +66,7 @@ export const exportSchema = {
     lifecycleState: z.string().max(200).optional(),
     assetTypeId: idSchema.optional(),
     locationId: idSchema.optional(),
+    departmentId: idSchema.optional(),
     condition: z.string().max(20).optional(),
     q: z.string().trim().max(80).optional(),
   }),

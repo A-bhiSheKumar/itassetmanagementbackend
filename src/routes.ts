@@ -4,12 +4,8 @@ import { authRoutes, meRoutes } from './modules/identity/index.js';
 import { tenantRoutes } from './modules/tenants/index.js';
 import { membershipRoutes } from './modules/memberships/index.js';
 import { roleRoutes } from './modules/roles/index.js';
-import {
-  peopleRoutes,
-  departmentRoutes,
-  locationRoutes,
-  costCentreRoutes,
-} from './modules/people/index.js';
+import { peopleRoutes } from './modules/people/index.js';
+import { departmentRoutes, locationRoutes, costCentreRoutes } from './modules/structure/index.js';
 import { catalogRoutes } from './modules/catalog/index.js';
 import { assetRoutes } from './modules/assets/index.js';
 import { assetAssignmentRoutes, assignmentRoutes } from './modules/assignments/index.js';

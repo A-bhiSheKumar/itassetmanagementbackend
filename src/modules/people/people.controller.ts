@@ -2,7 +2,6 @@ import type { Request, Response } from 'express';
 import { ok, created, list, noContent } from '../../core/http/index.js';
 import { flattenCustomFields } from '../catalog/index.js';
 import type { PersonDocument } from './person.model.js';
-import type { OrgUnitKind, OrgUnitDocument } from './orgUnit.model.js';
 import * as service from './people.service.js';
 
 function presentPerson(person: PersonDocument) {
@@ -68,46 +67,4 @@ export async function deactivate(req: Request, res: Response): Promise<void> {
 export async function destroy(req: Request, res: Response): Promise<void> {
   await service.deletePerson(req.params.id!);
   noContent(res);
-}
-
-// ── Org units ──────────────────────────────────────────────────────────────
-
-function presentOrgUnit(unit: OrgUnitDocument) {
-  return {
-    id: String(unit._id),
-    name: unit.name,
-    code: unit.code,
-    description: unit.description,
-    parentId: unit.parentId,
-    path: unit.path,
-    managerId: unit.managerId,
-    status: unit.status,
-    // Locations carry these; departments and cost centres do not.
-    ...(unit.address ? { address: unit.address } : {}),
-    ...(unit.timezone !== undefined ? { timezone: unit.timezone } : {}),
-  };
-}
-
-export function orgUnitController(kind: OrgUnitKind) {
-  return {
-    async index(_req: Request, res: Response): Promise<void> {
-      const units = await service.listOrgUnits(kind);
-      ok(res, units.map(presentOrgUnit));
-    },
-
-    async create(req: Request, res: Response): Promise<void> {
-      const unit = await service.createOrgUnit(kind, req.body as Record<string, unknown>);
-      created(res, presentOrgUnit(unit));
-    },
-
-    async update(req: Request, res: Response): Promise<void> {
-      const unit = await service.updateOrgUnit(kind, req.params.id!, req.body as Record<string, unknown>);
-      ok(res, presentOrgUnit(unit));
-    },
-
-    async destroy(req: Request, res: Response): Promise<void> {
-      await service.deleteOrgUnit(kind, req.params.id!);
-      noContent(res);
-    },
-  };
 }
