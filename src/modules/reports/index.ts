@@ -3,6 +3,10 @@ export { rebuildDailyMetrics, currentMetrics, metricsHistory } from './metrics.s
 export {
   needsAttention,
   warrantyPipeline,
+  attentionItems,
+  ATTENTION_KINDS,
+  type AttentionItem,
+  type AttentionKind,
   type AttentionRow,
   type ExpiringWarranty,
 } from './attention.service.js';
@@ -23,6 +27,7 @@ export {
   scanExpiringWarranties,
   rebuildAllMetrics,
   sweepStorage,
+  purgeRecycleBins,
   runNightlyScans,
 } from './scans.service.js';
 export { dashboardRoutes, offboardingRoutes } from './reports.routes.js';

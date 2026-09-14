@@ -54,6 +54,11 @@ documentSchema.index(
 // Storage accounting.
 documentSchema.index({ tenantId: 1, createdAt: -1 });
 
+// The recycle bin and its hourly purge find deleted rows by when they were
+// deleted. Partial, so it holds only deleted rows rather than a second copy of
+// every live one.
+documentSchema.index({ tenantId: 1, deletedAt: 1 }, { partialFilterExpression: { deletedAt: { $type: 'date' } } });
+
 export type DocumentRecord = Scoped<InferSchemaType<typeof documentSchema>>;
 export type DocumentRecordDocument = HydratedDocument<DocumentRecord>;
 

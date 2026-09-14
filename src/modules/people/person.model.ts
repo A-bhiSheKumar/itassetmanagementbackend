@@ -98,6 +98,11 @@ personSchema.index({ tenantId: 1, searchTokens: 1 });
 // Cursor pagination. _id breaks ties so the cursor is stable under concurrent writes.
 personSchema.index({ tenantId: 1, createdAt: -1, _id: -1 });
 
+// The recycle bin and its hourly purge find deleted rows by when they were
+// deleted. Partial, so it holds only deleted rows rather than a second copy of
+// every live one.
+personSchema.index({ tenantId: 1, deletedAt: 1 }, { partialFilterExpression: { deletedAt: { $type: 'date' } } });
+
 export type Person = InferSchemaType<typeof personSchema>;
 export type PersonDocument = HydratedDocument<Person>;
 

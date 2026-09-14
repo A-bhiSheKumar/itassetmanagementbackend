@@ -6,6 +6,7 @@ import {
   scanExpiringWarranties,
   sweepStorage,
   reconcileAll,
+  purgeRecycleBins,
 } from './modules/reports/index.js';
 import { registerImportJobHandler } from './modules/imports/index.js';
 import { deliverEmail } from './modules/email/index.js';
@@ -44,6 +45,8 @@ export function registerJobHandlers(): void {
       if (task === 'metrics' || task === 'all') await rebuildAllMetrics();
       if (task === 'warranties' || task === 'all') await scanExpiringWarranties();
       if (task === 'storage-sweep' || task === 'all') await sweepStorage();
+      // Not part of 'all': it has its own hourly schedule.
+      if (task === 'recycle-bin-purge') await purgeRecycleBins();
     },
     // A cross-tenant sweep can take a while on a large estate. The lease stays
     // under Lambda's 15-minute ceiling with room to finish cleanly.
@@ -85,6 +88,11 @@ export const SCHEDULES = [
      */
     intervalMs: 24 * 60 * 60_000,
     enqueue: () => getJobQueue().add(QUEUE.scheduled, { task: 'all' }, { jobId: 'nightly-scans' }),
+  },
+  {
+    name: 'recycle-bin-purge',
+    intervalMs: 60 * 60_000,
+    enqueue: () => getJobQueue().add(QUEUE.scheduled, { task: 'recycle-bin-purge' }, { jobId: 'recycle-bin-purge' }),
   },
 ] as const;
 

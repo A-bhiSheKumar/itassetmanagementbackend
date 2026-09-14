@@ -3,7 +3,7 @@ import { ok } from '../../core/http/index.js';
 import { ValidationError } from '../../core/errors/index.js';
 import { recentActivity } from '../timeline/index.js';
 import { currentMetrics, metricsHistory, rebuildDailyMetrics } from './metrics.service.js';
-import { needsAttention, warrantyPipeline } from './attention.service.js';
+import { needsAttention, warrantyPipeline, attentionItems, type AttentionKind } from './attention.service.js';
 import { offboardingChecklist, startOffboarding, completeOffboarding } from './offboarding.service.js';
 
 /**
@@ -43,6 +43,15 @@ export async function dashboard(_req: Request, res: Response): Promise<void> {
     })),
     computedAt: metrics.computedAt,
   });
+}
+
+export async function attention(req: Request, res: Response): Promise<void> {
+  const [counts, items] = await Promise.all([needsAttention(), attentionItems(req.params.kind as AttentionKind)]);
+  ok(res, { counts, items });
+}
+
+export async function attentionSummary(_req: Request, res: Response): Promise<void> {
+  ok(res, await needsAttention());
 }
 
 export async function warranties(req: Request, res: Response): Promise<void> {

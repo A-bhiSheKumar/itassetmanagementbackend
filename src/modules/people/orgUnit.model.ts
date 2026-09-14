@@ -34,6 +34,9 @@ function orgUnitSchema(extra: Record<string, unknown> = {}): Schema {
   // Subtree queries: "everything under London".
   schema.index({ tenantId: 1, path: 1 });
 
+  // The recycle bin and its purge find deleted units by when they were deleted.
+  schema.index({ tenantId: 1, deletedAt: 1 }, { partialFilterExpression: { deletedAt: { $type: 'date' } } });
+
   // Codes are optional, so uniqueness applies only when one is present — and
   // only among live records, so archiving frees the code for reuse.
   schema.index(

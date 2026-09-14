@@ -302,16 +302,80 @@ export async function deactivatePerson(id: string): Promise<PersonDocument> {
   return person;
 }
 
+/**
+ * What else refuses a person's deletion.
+ *
+ * People cannot know about assignments — assignments depend on people — so the
+ * check that someone still holds equipment is supplied from above, by the
+ * composition layer. Deleting a person who holds a laptop would leave the
+ * laptop assigned to nobody anyone can find.
+ */
+export type PersonDeleteGuard = (personId: string) => Promise<Array<{ type: string; count: number }>>;
+
+let deleteGuard: PersonDeleteGuard = async () => [];
+
+export function setPersonDeleteGuard(guard: PersonDeleteGuard): void {
+  deleteGuard = guard;
+}
+
 export async function deletePerson(id: string): Promise<void> {
   const person = await findPerson(id);
 
   const reports = await PersonModel.countDocuments({ managerId: id, deletedAt: null });
-  if (reports > 0) {
-    throw new ResourceInUseError('person', [{ type: 'direct report', count: reports }]);
+  const references = [
+    ...(reports > 0 ? [{ type: 'direct report', count: reports }] : []),
+    ...(await deleteGuard(id)).filter((r) => r.count > 0),
+  ];
+
+  if (references.length > 0) {
+    throw new ResourceInUseError('person', references);
   }
 
   await person.softDelete();
-  await incrementUsage('people', -1);
+  // Deactivation already released their place in the plan; releasing it again
+  // here would let the count drift below the truth.
+  if (person.status !== 'inactive') await incrementUsage('people', -1);
+}
+
+/**
+ * Brings a deleted person back.
+ *
+ * Deleting freed their email and employee code, so either may belong to
+ * someone else by now; that is refused by name rather than as a duplicate-key
+ * error. A manager or unit deleted in the meantime is cleared, not restored as
+ * a dangling reference.
+ */
+export async function restorePerson(id: string): Promise<PersonDocument> {
+  const person = await PersonModel.findOne({ _id: id, deletedAt: { $ne: null } }).exec();
+  if (!person) throw new NotFoundError('Person');
+
+  const clashes: Record<string, string[]> = {};
+  if (person.email && (await PersonModel.exists({ email: person.email, _id: { $ne: person._id } }))) {
+    clashes.email = [`${person.email} now belongs to someone else.`];
+  }
+  if (person.employeeCode && (await PersonModel.exists({ employeeCode: person.employeeCode, _id: { $ne: person._id } }))) {
+    clashes.employeeCode = [`Employee code ${person.employeeCode} is now used by someone else.`];
+  }
+  if (Object.keys(clashes).length > 0) {
+    throw new ValidationError(`${person.firstName} ${person.lastName} cannot be restored — someone else has taken their details.`, clashes);
+  }
+
+  const active = person.status !== 'inactive';
+  if (active) await assertWithinLimit('people');
+
+  for (const [field, model] of [
+    ['departmentId', ORG_UNIT_MODELS.department],
+    ['locationId', ORG_UNIT_MODELS.location],
+    ['costCentreId', ORG_UNIT_MODELS.costCentre],
+    ['managerId', PersonModel],
+  ] as const) {
+    const ref = person.get(field) as string | null;
+    if (ref && !(await (model as Model<unknown>).exists({ _id: ref }))) person.set(field, null);
+  }
+
+  await person.restore();
+  if (active) await incrementUsage('people');
+  return person;
 }
 
 // ── Org units ──────────────────────────────────────────────────────────────
@@ -377,6 +441,33 @@ export async function deleteOrgUnit(kind: OrgUnitKind, id: string): Promise<void
   }
 
   await unit.softDelete();
+}
+
+/**
+ * Brings a deleted location, department or cost centre back.
+ *
+ * A unit could only be deleted once empty, so there are no children to bring
+ * with it. Its parent may have gone since, in which case it returns at the top
+ * level rather than pointing at nothing.
+ */
+export async function restoreOrgUnit(kind: OrgUnitKind, id: string) {
+  const model = ORG_UNIT_MODELS[kind];
+  const unit = await model.findOne({ _id: id, deletedAt: { $ne: null } } as never).exec();
+  if (!unit) throw new NotFoundError('Record');
+
+  if (unit.code && (await model.exists({ code: unit.code, _id: { $ne: unit._id } } as never))) {
+    throw new ValidationError(`${unit.name} cannot be restored — its code ${unit.code} is now used elsewhere.`, {
+      code: [`${unit.code} is taken.`],
+    });
+  }
+
+  if (unit.parentId && !(await model.exists({ _id: unit.parentId } as never))) {
+    unit.parentId = null;
+    unit.path = [];
+  }
+
+  await unit.restore();
+  return unit;
 }
 
 function omit(source: Record<string, unknown>, keys: string[]): Record<string, unknown> {

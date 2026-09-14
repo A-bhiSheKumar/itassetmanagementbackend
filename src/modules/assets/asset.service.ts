@@ -1,3 +1,4 @@
+import { getContext } from '../../core/context/index.js';
 import { NotFoundError, ValidationError, StaleWriteError } from '../../core/errors/index.js';
 import { withTransaction } from '../../core/db/index.js';
 import { emit, flushOutbox, type FieldChange } from '../../core/events/index.js';
@@ -300,6 +301,8 @@ export async function deleteAsset(id: string): Promise<void> {
     if (!doc) throw new NotFoundError('Asset');
 
     doc.deletedAt = new Date();
+    // Who deleted it is the first thing the recycle bin is asked.
+    doc.deletedBy = getContext()?.userId ?? null;
     await doc.save({ session });
 
     await emit(

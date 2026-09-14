@@ -124,8 +124,8 @@ describe('needs attention', () => {
     const row = res.body.data.attention.find((r: { key: string }) => r.key === 'warranties');
 
     expect(row.count).toBe(1);
-    // Every row links to a pre-filtered list rather than a dead end.
-    expect(row.href).toContain('/assets?');
+    // Every row opens the inbox on its own tab, where each item can be acted on.
+    expect(row.href).toBe('/attention?kind=warranties');
   });
 
   it('ignores the warranty on a disposed asset', async () => {
@@ -233,5 +233,49 @@ describe('the notification inbox', () => {
 
     const unread = await as(request(server()).get('/api/v1/notifications?unreadOnly=true'));
     expect(unread.body.data).toHaveLength(0);
+  });
+});
+
+describe('the attention inbox', () => {
+  async function person(firstName: string) {
+    const res = await as(request(server()).post('/api/v1/people').send({ firstName, lastName: 'Test' })).expect(201);
+    return res.body.data.id as string;
+  }
+
+  it('lists overdue returns, most overdue first, with who has them', async () => {
+    const { AssignmentModel } = await import('../../src/modules/assignments/index.js');
+    const ada = await person('Ada');
+    const grace = await person('Grace');
+    const a = await makeAsset({ name: 'Laptop A' }).expect(201);
+    const b = await makeAsset({ name: 'Laptop B' }).expect(201);
+    const c = await makeAsset({ name: 'Not due yet' }).expect(201);
+
+    await as(request(server()).post(`/api/v1/assets/${a.body.data.id}/assign`).send({ assigneeId: ada, dueAt: inDays(5) })).expect(201);
+    await as(request(server()).post(`/api/v1/assets/${b.body.data.id}/assign`).send({ assigneeId: grace, dueAt: inDays(5) })).expect(201);
+    await as(request(server()).post(`/api/v1/assets/${c.body.data.id}/assign`).send({ assigneeId: grace, dueAt: inDays(5) })).expect(201);
+
+    // Fake the passage of time: the API refuses a due date in the past.
+    await AssignmentModel.collection.updateOne({ tenantId: t.tenantId, assetId: a.body.data.id }, { $set: { dueAt: new Date(Date.now() - 2 * 86_400_000) } });
+    await AssignmentModel.collection.updateOne({ tenantId: t.tenantId, assetId: b.body.data.id }, { $set: { dueAt: new Date(Date.now() - 9 * 86_400_000) } });
+
+    const res = await as(request(server()).get('/api/v1/dashboard/attention/overdue')).expect(200);
+
+    expect(res.body.data.items.map((i: { title: string }) => i.title)).toEqual(['Laptop B', 'Laptop A']);
+    expect(res.body.data.items[0]).toMatchObject({ personId: grace, personName: 'Grace Test', days: -9, assetId: b.body.data.id });
+    expect(res.body.data.counts.find((r: { key: string }) => r.key === 'overdue').count).toBe(2);
+  });
+
+  it('lists people being offboarded with what they still hold', async () => {
+    const ada = await person('Ada');
+    const a = await makeAsset().expect(201);
+    await as(request(server()).post(`/api/v1/assets/${a.body.data.id}/assign`).send({ assigneeId: ada })).expect(201);
+    await as(request(server()).post(`/api/v1/people/${ada}/offboarding/start`).send({})).expect(200);
+
+    const res = await as(request(server()).get('/api/v1/dashboard/attention/offboarding')).expect(200);
+    expect(res.body.data.items).toEqual([expect.objectContaining({ personId: ada, detail: '1 asset still to return' })]);
+  });
+
+  it('refuses a kind it does not know', async () => {
+    await as(request(server()).get('/api/v1/dashboard/attention/everything')).expect(422);
   });
 });

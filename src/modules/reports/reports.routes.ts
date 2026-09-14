@@ -4,10 +4,21 @@ import { asyncHandler } from '../../core/http/index.js';
 import { validate, strictObject, idSchema } from '../../core/validation/index.js';
 import { requirePermission } from '../../core/authz/index.js';
 import * as controller from './reports.controller.js';
+import { ATTENTION_KINDS } from './attention.service.js';
 
 export const dashboardRoutes = Router();
 
 dashboardRoutes.get('/', requirePermission('asset:read'), asyncHandler(controller.dashboard));
+
+/** The inbox: counts for every kind (for the tabs) and the items of one. */
+dashboardRoutes.get('/attention', requirePermission('asset:read'), asyncHandler(controller.attentionSummary));
+
+dashboardRoutes.get(
+  '/attention/:kind',
+  requirePermission('asset:read'),
+  validate({ params: strictObject({ kind: z.enum(ATTENTION_KINDS) }) }),
+  asyncHandler(controller.attention),
+);
 
 dashboardRoutes.get(
   '/warranties',

@@ -172,13 +172,53 @@ export async function downloadUrl(documentId: string): Promise<string> {
   return getStorage().presignDownload(record.storageKey, record.fileName);
 }
 
+/**
+ * Moves a file to the recycle bin.
+ *
+ * The stored object stays until the bin is purged, so an accidental delete can
+ * be undone with the file intact. It stops counting against the storage
+ * allowance straight away — a customer clearing space should see it cleared.
+ */
 export async function deleteDocument(documentId: string): Promise<void> {
   const record = await DocumentModel.findById(documentId).exec();
   if (!record) throw new NotFoundError('Document');
 
-  await getStorage().delete(record.storageKey);
   await record.softDelete();
-  await addStorageBytes(-record.sizeBytes);
+  if (record.status === 'ready') await addStorageBytes(-record.sizeBytes);
+}
+
+export async function restoreDocument(documentId: string): Promise<DocumentRecordDocument> {
+  const record = await DocumentModel.findOne({ _id: documentId, deletedAt: { $ne: null }, status: 'ready' }).exec();
+  if (!record) throw new NotFoundError('Document');
+
+  await assertStorageAvailable(record.sizeBytes);
+  await record.restore();
+  await addStorageBytes(record.sizeBytes);
+  return record;
+}
+
+/**
+ * Permanently removes files deleted before `cutoff`, objects first.
+ *
+ * Object then row: if the process dies between the two, the next run finds the
+ * row and deletes the (already missing) object again, which storage treats as
+ * success. The other order would leave objects no row points to.
+ */
+export async function purgeDeletedDocuments(cutoff: Date): Promise<number> {
+  const expired = await DocumentModel.find({ deletedAt: { $lt: cutoff } })
+    .select('storageKey')
+    .limit(500)
+    .lean<Array<{ _id: unknown; storageKey: string }>>();
+
+  for (const record of expired) {
+    await getStorage().delete(record.storageKey);
+  }
+
+  if (expired.length > 0) {
+    await DocumentModel.deleteMany({ _id: { $in: expired.map((r) => r._id) }, deletedAt: { $lt: cutoff } });
+  }
+
+  return expired.length;
 }
 
 async function assertStorageAvailable(additionalBytes: number): Promise<void> {

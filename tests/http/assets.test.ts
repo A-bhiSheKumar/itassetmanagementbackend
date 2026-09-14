@@ -262,9 +262,16 @@ describe('assign, return, transfer', () => {
     const asset = await makeAsset();
     await as(request(server()).post(`/api/v1/assets/${asset.body.data.id}/assign`).send({ assigneeId: adaId }));
 
-    // The person is erased; the assignment record survives, as it must for the
-    // audit trail. The name simply cannot be resolved any more.
-    await as(request(server()).delete(`/api/v1/people/${adaId}`));
+    // Someone holding equipment cannot be deleted — the laptop would be assigned
+    // to nobody anyone can find.
+    const refused = await as(request(server()).delete(`/api/v1/people/${adaId}`));
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.details.references).toContainEqual({ type: 'asset they still hold', count: 1 });
+
+    // Once it is back, they can go. The assignment record survives, as it must
+    // for the audit trail; the name simply cannot be resolved any more.
+    await as(request(server()).post(`/api/v1/assets/${asset.body.data.id}/return`).send({})).expect(200);
+    await as(request(server()).delete(`/api/v1/people/${adaId}`)).expect(204);
 
     const held = await as(request(server()).get(`/api/v1/assignments?assigneeId=${adaId}`));
     expect(held.status).toBe(200);

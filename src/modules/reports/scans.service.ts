@@ -6,6 +6,7 @@ import { MembershipModel } from '../memberships/index.js';
 import { UserModel } from '../identity/index.js';
 import { notify } from '../notifications/index.js';
 import { sweepAbandonedUploads } from '../documents/index.js';
+import { purgeExpired } from '../recycleBin/index.js';
 import { warrantyPipeline } from './attention.service.js';
 import { rebuildDailyMetrics } from './metrics.service.js';
 
@@ -143,6 +144,23 @@ export async function sweepStorage(): Promise<{ tenants: number; swept: number }
   });
 
   return { tenants: result.tenants, swept };
+}
+
+/**
+ * Empties each tenant's recycle bin of anything past its restore window.
+ *
+ * Hourly rather than nightly, so "restorable for a day" means about a day, not
+ * up to two.
+ */
+export async function purgeRecycleBins(): Promise<{ tenants: number; purged: number }> {
+  let purged = 0;
+
+  const result = await eachActiveTenant('recycle-bin-purge', async () => {
+    const counts = await purgeExpired();
+    purged += Object.values(counts).reduce((a, b) => a + b, 0);
+  });
+
+  return { tenants: result.tenants, purged };
 }
 
 /** Everything the nightly maintenance window runs. */

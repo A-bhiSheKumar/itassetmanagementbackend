@@ -5,6 +5,8 @@ export {
   listDocuments,
   downloadUrl,
   deleteDocument,
+  restoreDocument,
+  purgeDeletedDocuments,
   sweepAbandonedUploads,
   type PresignInput,
 } from './document.service.js';

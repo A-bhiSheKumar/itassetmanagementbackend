@@ -15,12 +15,16 @@ export {
   updatePerson,
   deactivatePerson,
   deletePerson,
+  restorePerson,
+  setPersonDeleteGuard,
   scopeFilter,
   listOrgUnits,
   createOrgUnit,
   updateOrgUnit,
   deleteOrgUnit,
+  restoreOrgUnit,
   type PersonInput,
+  type PersonDeleteGuard,
   type ListPeopleOptions,
 } from './people.service.js';
 export { subtreeIds } from './hierarchy.js';
