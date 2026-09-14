@@ -544,3 +544,18 @@ describe('optimistic locking', () => {
     expect(res.body.error.code).toBe('STALE_WRITE');
   });
 });
+
+describe('creating an asset without a type', () => {
+  it('names the missing field in words a person can act on', async () => {
+    const t = await seedTenant(server(), 'no-type');
+    const res = await request(server())
+      .post('/api/v1/assets')
+      .set('Authorization', `Bearer ${t.accessToken}`)
+      .send({ name: 'Laptop with no type' });
+
+    // Previously "Invalid input", shown under the Type dropdown. The asset form
+    // used to paper over this by silently choosing the first type.
+    expect(res.status).toBe(422);
+    expect(res.body.error.fields.assetTypeId).toEqual(['Choose an asset type.']);
+  });
+});

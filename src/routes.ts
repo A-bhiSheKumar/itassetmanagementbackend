@@ -16,6 +16,7 @@ import { assetAssignmentRoutes, assignmentRoutes } from './modules/assignments/i
 import { auditLogRoutes } from './modules/auditlog/index.js';
 import { documentRoutes } from './modules/documents/index.js';
 import { notificationRoutes } from './modules/notifications/index.js';
+import { savedViewRoutes } from './modules/savedViews/index.js';
 import { dashboardRoutes, offboardingRoutes } from './modules/reports/index.js';
 import { importRoutes, exportRoutes } from './modules/imports/index.js';
 
@@ -64,6 +65,7 @@ apiRouter.use('/assignments', assignmentRoutes);
 apiRouter.use('/audit-logs', auditLogRoutes);
 apiRouter.use('/documents', documentRoutes);
 apiRouter.use('/notifications', notificationRoutes);
+apiRouter.use('/saved-views', savedViewRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
 apiRouter.use('/imports', importRoutes);
 apiRouter.use('/exports', exportRoutes);

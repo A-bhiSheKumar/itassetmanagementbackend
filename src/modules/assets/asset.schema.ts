@@ -14,7 +14,13 @@ const moneyish = {
 
 const assetBody = {
   name: z.string().trim().min(1, 'Give this asset a name.').max(160),
-  assetTypeId: idSchema,
+  // `idSchema` is a union, and a missing union field fails with Zod's generic
+  // "Invalid input" — which the form would show under the Type dropdown. Name
+  // the actual problem first, then validate the id's shape.
+  assetTypeId: z
+    .string({ required_error: 'Choose an asset type.', invalid_type_error: 'Choose an asset type.' })
+    .min(1, 'Choose an asset type.')
+    .pipe(idSchema),
   assetTag: z.string().trim().max(40).optional(),
   serialNumber: z.string().trim().max(120).nullish(),
   model: z.string().trim().max(120).optional(),
