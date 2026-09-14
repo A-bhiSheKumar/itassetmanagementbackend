@@ -10,5 +10,7 @@ export {
   revokeRefreshToken,
   revokeAllSessions,
   changePassword,
+  sendPasswordReset,
+  resetPassword,
 } from './identity.service.js';
 export { authRoutes, meRoutes } from './auth.routes.js';

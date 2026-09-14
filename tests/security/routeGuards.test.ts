@@ -56,12 +56,20 @@ describe('route guards', () => {
       'GET /api/v1/health/metrics',
       'GET /api/v1/health/ready',
       'GET /api/v1/health/summary',
+      // Receipt confirmation. Whoever confirms usually has no login; the
+      // single-use token emailed to them is the credential, and the endpoint
+      // is rate limited like every other credential endpoint.
+      'POST /api/v1/assignments/acknowledge',
+      'POST /api/v1/assignments/acknowledge/preview',
       // Credential endpoints: by definition reached without a session.
       'POST /api/v1/auth/accept-invitation',
+      'POST /api/v1/auth/forgot-password',
+      'POST /api/v1/auth/invitation',
       'POST /api/v1/auth/login',
       'POST /api/v1/auth/logout',
       'POST /api/v1/auth/refresh',
       'POST /api/v1/auth/register',
+      'POST /api/v1/auth/reset-password',
       // Resend's delivery events. Resend has no session; the request is
       // authorised by a Svix HMAC over the raw body, checked before it is read.
       'POST /api/v1/webhooks/resend',

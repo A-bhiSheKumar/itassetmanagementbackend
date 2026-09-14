@@ -18,6 +18,13 @@ export {
   findInvitationByToken,
   type InviteResult,
 } from './membership.service.js';
+export {
+  listPendingInvitations,
+  resendInvitation,
+  revokeInvitation,
+  INVITE_TTL_DAYS,
+  type PendingInvitation,
+} from './invitation.service.js';
 export { membershipRoutes } from './membership.routes.js';
 export {
   setUserDirectory,

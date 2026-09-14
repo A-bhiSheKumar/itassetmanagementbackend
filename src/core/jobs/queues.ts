@@ -14,6 +14,8 @@ export const QUEUE = {
   imports: 'imports',
   /** Email delivery, one message per job, retried with backoff. */
   email: 'email',
+  /** Account mail that must not reveal, by its timing, whether an account exists. */
+  account: 'account',
 } as const;
 
 export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
@@ -23,6 +25,7 @@ export interface JobPayloads {
   scheduled: { task: 'metrics' | 'warranties' | 'storage-sweep' | 'reconcile' | 'recycle-bin-purge' | 'all' };
   imports: { importJobId: string; tenantId: string };
   email: { messageId: string };
+  account: { task: 'password-reset'; email: string };
 }
 
 export interface JobOptions {

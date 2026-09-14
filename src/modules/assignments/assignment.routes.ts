@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { asyncHandler } from '../../core/http/index.js';
+import { asyncHandler, limits } from '../../core/http/index.js';
 import { validate } from '../../core/validation/index.js';
-import { requirePermission, requireAuth } from '../../core/authz/index.js';
+import { requirePermission, markPublic } from '../../core/authz/index.js';
 import * as controller from './assignment.controller.js';
 import {
   assignSchema,
@@ -9,6 +9,7 @@ import {
   transferSchema,
   listAssignmentsSchema,
   acknowledgeSchema,
+  assignmentIdSchema,
   personIdSchema,
 } from './assignment.schema.js';
 
@@ -62,13 +63,31 @@ assignmentRoutes.get(
 );
 
 /**
- * Acknowledgement is authenticated but needs no asset permission: the person
- * confirming receipt is usually a Member with nothing but `asset:read`, and the
- * single-use token is what proves they are the right person.
+ * Confirming receipt is public. The person confirming is usually someone who
+ * was handed a laptop and has no login at all; the single-use link emailed to
+ * them is what proves they are the right person. Rate limited like every other
+ * endpoint that accepts a credential.
  */
 assignmentRoutes.post(
+  '/acknowledge/preview',
+  limits.credentials,
+  markPublic(),
+  validate(acknowledgeSchema),
+  asyncHandler(controller.acknowledgementPreview),
+);
+
+assignmentRoutes.post(
   '/acknowledge',
-  requireAuth(),
+  limits.credentials,
+  markPublic(),
   validate(acknowledgeSchema),
   asyncHandler(controller.acknowledge),
+);
+
+assignmentRoutes.post(
+  '/:id/remind',
+  limits.invitations,
+  requirePermission('asset:assign'),
+  validate(assignmentIdSchema),
+  asyncHandler(controller.remind),
 );

@@ -1,4 +1,5 @@
 import { logger } from '../../core/logging/index.js';
+import { isDevelopment } from '../../config/index.js';
 
 /**
  * Mail delivery behind a port.
@@ -110,7 +111,20 @@ export class RecordingTransport implements EmailTransport {
 
   async send(message: OutgoingEmail): Promise<SendOutcome> {
     this.sent.push(message);
-    logger.info({ to: message.to, subject: message.subject }, 'Email recorded (not sent — no RESEND_API_KEY)');
+    logger.info(
+      {
+        to: message.to,
+        subject: message.subject,
+        /*
+         * Local development only, where no email can arrive: the links are the
+         * only way to try an invitation, a reset or a receipt confirmation.
+         * Never in production — this transport is not used there — and not in
+         * tests, which read them from `sent`.
+         */
+        ...(isDevelopment ? { links: message.text.match(/https?:\/\/\S+/g) ?? [] } : {}),
+      },
+      'Email recorded (not sent — no RESEND_API_KEY)',
+    );
     return { ok: true, providerId: null };
   }
 

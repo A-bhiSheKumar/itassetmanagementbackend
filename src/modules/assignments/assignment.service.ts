@@ -1,11 +1,11 @@
 import { AssetAlreadyAssignedError, NotFoundError, ValidationError } from '../../core/errors/index.js';
 import { withTransaction } from '../../core/db/index.js';
 import { getContext } from '../../core/context/index.js';
-import { generateToken, hashToken } from '../../core/auth/index.js';
 import { emit, flushOutbox } from '../../core/events/index.js';
 import { AssetModel } from '../assets/index.js';
 import { PersonModel } from '../people/index.js';
 import { AssignmentModel, type AssignmentDocument } from './assignment.model.js';
+import { assertCanRequestReceipt, newReceiptToken, sendReceiptRequest } from './receipts.service.js';
 
 /**
  * Assign, return, transfer.
@@ -73,8 +73,9 @@ export async function assignAsset(input: AssignInput): Promise<AssignmentDocumen
   if (!existing) throw new NotFoundError('Asset');
 
   const assigneeName = await assertAssigneeExists(assigneeType, input.assigneeId);
+  if (input.requireAcknowledgement) await assertCanRequestReceipt(assigneeType, input.assigneeId);
 
-  const acknowledgementToken = input.requireAcknowledgement ? generateToken() : null;
+  const receipt = input.requireAcknowledgement ? newReceiptToken() : null;
   let created: AssignmentDocument;
 
   try {
@@ -97,13 +98,7 @@ export async function assignAsset(input: AssignInput): Promise<AssignmentDocumen
             dueAt: input.dueAt ? new Date(input.dueAt) : null,
             conditionOut: input.conditionOut ?? asset.condition,
             notes: input.notes ?? '',
-            acknowledgement: acknowledgementToken
-              ? {
-                  requiredAt: new Date(),
-                  tokenHash: hashToken(acknowledgementToken),
-                  method: 'link',
-                }
-              : {},
+            acknowledgement: receipt?.acknowledgement ?? {},
           },
         ],
         { session },
@@ -145,6 +140,8 @@ export async function assignAsset(input: AssignInput): Promise<AssignmentDocumen
   }
 
   await flushOutbox();
+  // After the commit: an email about an assignment that rolled back would be a lie.
+  if (receipt) await sendReceiptRequest(created!, receipt.token, { reminder: false });
   return created!;
 }
 
@@ -237,6 +234,7 @@ export async function transferAsset(input: {
   assigneeType?: 'person' | 'location' | 'asset';
   notes?: string;
   condition?: string;
+  requireAcknowledgement?: boolean;
 }): Promise<AssignmentDocument> {
   const assigneeType = input.assigneeType ?? 'person';
 
@@ -257,6 +255,8 @@ export async function transferAsset(input: {
   }
 
   const toName = await assertAssigneeExists(assigneeType, input.toAssigneeId);
+  if (input.requireAcknowledgement) await assertCanRequestReceipt(assigneeType, input.toAssigneeId);
+  const receipt = input.requireAcknowledgement ? newReceiptToken() : null;
   const fromName = await resolveAssigneeName(current.assigneeType, current.assigneeId);
 
   let created: AssignmentDocument;
@@ -293,6 +293,7 @@ export async function transferAsset(input: {
             conditionOut: input.condition ?? asset.condition,
             notes: input.notes ?? '',
             previousAssignmentId: String(previous._id),
+            acknowledgement: receipt?.acknowledgement ?? {},
           },
         ],
         { session },
@@ -330,6 +331,7 @@ export async function transferAsset(input: {
   }
 
   await flushOutbox();
+  if (receipt) await sendReceiptRequest(created!, receipt.token, { reminder: false });
   return created!;
 }
 
@@ -364,38 +366,3 @@ export function assignmentHistory(assetId: string) {
   return AssignmentModel.find({ assetId }).sort({ assignedAt: -1 }).exec();
 }
 
-export async function acknowledgeAssignment(token: string): Promise<AssignmentDocument> {
-  const found = await AssignmentModel.findOne({
-    'acknowledgement.tokenHash': hashToken(token),
-    'acknowledgement.acknowledgedAt': null,
-    status: 'active',
-  }).exec();
-
-  if (!found) throw new NotFoundError('Acknowledgement');
-
-  const asset = await AssetModel.findById(found.assetId).select('name').lean();
-
-  const assignment = await withTransaction(async (session) => {
-    const doc = await AssignmentModel.findById(found._id).session(session).exec();
-    if (!doc) throw new NotFoundError('Acknowledgement');
-
-    doc.acknowledgement!.acknowledgedAt = new Date();
-    await doc.save({ session });
-
-    await emit(
-      {
-        type: 'asset.acknowledged',
-        subjectId: assignment.assetId,
-        subjectType: 'asset',
-        summary: `${asset?.name ?? 'Asset'} receipt was acknowledged`,
-        relatedIds: { assignmentId: String(doc._id), assigneeId: doc.assigneeId },
-      },
-      session,
-    );
-
-    return doc;
-  });
-
-  await flushOutbox();
-  return assignment;
-}

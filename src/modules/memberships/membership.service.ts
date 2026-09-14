@@ -5,8 +5,8 @@ import type { Permission } from '../../core/authz/index.js';
 import { resolvePermissions, findRoleByKey, assertCanGrantRoles } from '../roles/index.js';
 import { MembershipModel, type MembershipDocument } from './membership.model.js';
 import { InvitationModel } from './invitation.model.js';
+import { INVITE_TTL_DAYS, sendInvitationEmail } from './invitation.service.js';
 
-const INVITE_TTL_DAYS = 7;
 
 /**
  * Every membership a user holds, across all tenants.
@@ -82,9 +82,8 @@ export async function assertNotLastOwner(membershipId: string): Promise<void> {
 
 export interface InviteResult {
   invitationId: string;
-  /** Returned once, delivered by email. Only the hash is stored. */
-  token: string;
   email: string;
+  expiresAt: Date;
 }
 
 export async function inviteMember(input: {
@@ -97,21 +96,17 @@ export async function inviteMember(input: {
   // grants more than you hold.
   await assertCanGrantRoles(ctx.permissions, input.roleIds);
 
-  const existingMember = await MembershipModel.findOne({}).where('userId').ne(null).lean();
-  void existingMember;
-
   const token = generateToken();
 
+  let invitation;
   try {
-    const invitation = await InvitationModel.create({
+    invitation = await InvitationModel.create({
       email: input.email,
       roleIds: input.roleIds,
       tokenHash: hashToken(token),
       invitedBy: ctx.userId,
       expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000),
     });
-
-    return { invitationId: String(invitation._id), token, email: input.email };
   } catch (err) {
     // The partial unique index on (tenantId, email) for unresolved invitations.
     if ((err as { code?: number }).code === 11000) {
@@ -119,6 +114,9 @@ export async function inviteMember(input: {
     }
     throw err;
   }
+
+  await sendInvitationEmail(invitation as never, token);
+  return { invitationId: String(invitation._id), email: input.email, expiresAt: invitation.expiresAt };
 }
 
 export async function updateMemberRoles(

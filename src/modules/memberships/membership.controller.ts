@@ -1,7 +1,6 @@
 import type { Request, Response } from 'express';
 import { ok, created, noContent } from '../../core/http/index.js';
 import { assertWithinLimit, incrementUsage } from '../subscriptions/index.js';
-import { isProduction } from '../../config/index.js';
 import { userDirectory } from './userDirectory.js';
 import {
   listMembers,
@@ -10,6 +9,7 @@ import {
   suspendMember,
   reactivateMember,
 } from './membership.service.js';
+import { listPendingInvitations, resendInvitation, revokeInvitation } from './invitation.service.js';
 
 export async function index(_req: Request, res: Response): Promise<void> {
   const members = await listMembers();
@@ -59,14 +59,21 @@ export async function invite(req: Request, res: Response): Promise<void> {
   const result = await inviteMember({ email, roleIds });
   await incrementUsage('seats');
 
-  created(res, {
-    id: result.invitationId,
-    email: result.email,
-    // The email delivery job lands in M4. Until then the token is returned in
-    // non-production so the flow is testable end to end. It must never leak in
-    // production: an invitation token is a credential.
-    ...(isProduction ? {} : { inviteToken: result.token }),
-  });
+  // The link goes by email only. An invitation token is a credential.
+  created(res, { id: result.invitationId, email: result.email, expiresAt: result.expiresAt });
+}
+
+export async function invitations(_req: Request, res: Response): Promise<void> {
+  ok(res, await listPendingInvitations());
+}
+
+export async function resend(req: Request, res: Response): Promise<void> {
+  ok(res, await resendInvitation(req.params.id!));
+}
+
+export async function revoke(req: Request, res: Response): Promise<void> {
+  await revokeInvitation(req.params.id!);
+  noContent(res);
 }
 
 export async function updateRoles(req: Request, res: Response): Promise<void> {

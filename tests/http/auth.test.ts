@@ -5,6 +5,7 @@ import { createApp } from '../../src/app.js';
 import { useTestServer } from '../helpers/testServer.js';
 import { ensurePlansSeeded, seedTenant, type SeededTenant } from '../helpers/factories.js';
 import { REFRESH_COOKIE } from '../../src/core/auth/index.js';
+import { emailedToken } from '../helpers/email.js';
 
 const app = createApp();
 // One server for the whole file — see helpers/testServer.ts.
@@ -219,9 +220,16 @@ describe('the M1 gate: one user, two organisations', () => {
 
     expect(invite.status).toBe(201);
 
-    const accepted = await request(server())
-      .post('/api/v1/auth/accept-invitation')
-      .send({ token: invite.body.data.inviteToken });
+    const token = emailedToken(email, '/accept-invitation');
+
+    // The address already has an account, so the link alone is not enough:
+    // it would hand whoever holds it a session for that account.
+    const withoutPassword = await request(server()).post('/api/v1/auth/accept-invitation').send({ token });
+    expect(withoutPassword.status).toBe(422);
+    const wrongPassword = await request(server()).post('/api/v1/auth/accept-invitation').send({ token, password: 'not-the-right-one' });
+    expect(wrongPassword.status).toBe(401);
+
+    const accepted = await request(server()).post('/api/v1/auth/accept-invitation').send({ token, password: PASSWORD });
 
     expect(accepted.status).toBe(200);
 
@@ -259,13 +267,13 @@ describe('authorization invariants', () => {
     const ownerRoleId = roles.body.data.find((r: { key: string }) => r.key === 'owner').id;
 
     const adminEmail = `admin-${ulid()}@example.test`;
-    const invite = await request(server())
+    await request(server())
       .post('/api/v1/members/invite')
       .set('Authorization', `Bearer ${acme.accessToken}`)
       .send({ email: adminEmail, roleIds: [adminRoleId] });
 
     await request(server()).post('/api/v1/auth/accept-invitation').send({
-      token: invite.body.data.inviteToken,
+      token: emailedToken(adminEmail, '/accept-invitation'),
       password: PASSWORD,
       name: 'The Admin',
     });
@@ -321,13 +329,13 @@ describe('authorization invariants', () => {
     const memberRoleId = roles.body.data.find((r: { key: string }) => r.key === 'member').id;
     const email = `plain-${ulid()}@example.test`;
 
-    const invite = await request(server())
+    await request(server())
       .post('/api/v1/members/invite')
       .set('Authorization', `Bearer ${acme.accessToken}`)
       .send({ email, roleIds: [memberRoleId] });
 
     await request(server()).post('/api/v1/auth/accept-invitation').send({
-      token: invite.body.data.inviteToken,
+      token: emailedToken(email, '/accept-invitation'),
       password: PASSWORD,
       name: 'Plain Member',
     });
@@ -392,13 +400,13 @@ describe('permission changes take effect immediately', () => {
     const memberRoleId = roles.body.data.find((r: { key: string }) => r.key === 'member').id;
     const email = `demoted-${ulid()}@example.test`;
 
-    const invite = await request(server())
+    await request(server())
       .post('/api/v1/members/invite')
       .set('Authorization', `Bearer ${acme.accessToken}`)
       .send({ email, roleIds: [adminRoleId] });
 
     const accepted = await request(server()).post('/api/v1/auth/accept-invitation').send({
-      token: invite.body.data.inviteToken,
+      token: emailedToken(email, '/accept-invitation'),
       password: PASSWORD,
       name: 'Soon Demoted',
     });

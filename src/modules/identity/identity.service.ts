@@ -9,6 +9,8 @@ import {
 } from '../../core/auth/index.js';
 import { UnauthenticatedError, DuplicateValueError, AppError, ErrorCode } from '../../core/errors/index.js';
 import { logger } from '../../core/logging/index.js';
+import { env } from '../../config/index.js';
+import { absolute, sendEmail } from '../email/index.js';
 import { UserModel, type UserDocument } from './user.model.js';
 import { RefreshTokenModel } from './refreshToken.model.js';
 
@@ -207,4 +209,95 @@ export async function changePassword(
   await user.save();
 
   await revokeAllSessions(userId, 'password_change');
+  await sendPasswordChangedNotice(user);
+}
+
+// ── Password reset ──────────────────────────────────────────────────────────
+
+export const RESET_TTL_MINUTES = 60;
+/** A second request inside this window sends nothing — a mailbox is not a target. */
+const RESET_COOLDOWN_MS = 60_000;
+
+const formatDateTime = (date: Date) =>
+  `${new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }).format(date)} UTC`;
+
+async function sendPasswordChangedNotice(user: UserDocument): Promise<void> {
+  await sendEmail({
+    template: 'passwordChanged',
+    to: user.email,
+    payload: { name: user.name, changedAt: formatDateTime(new Date()) },
+    relatedTo: { type: 'user', id: String(user._id) },
+  });
+}
+
+/**
+ * Emails a reset link, if the address belongs to an active account.
+ *
+ * Runs as a job, never inline in the request: the request always does the same
+ * single write whether or not the account exists, so neither the response nor
+ * its timing says which addresses have accounts.
+ */
+export async function sendPasswordReset(email: string): Promise<void> {
+  const user = await UserModel.findOne({ email })
+    .collation({ locale: 'en', strength: 2 })
+    .select('+passwordReset')
+    .exec();
+
+  if (!user || user.status !== 'active') return;
+
+  const last = user.passwordReset?.requestedAt;
+  if (last && Date.now() - last.getTime() < RESET_COOLDOWN_MS) return;
+
+  const token = generateToken();
+  user.passwordReset = {
+    tokenHash: hashToken(token),
+    expiresAt: new Date(Date.now() + RESET_TTL_MINUTES * 60_000),
+    requestedAt: new Date(),
+  } as never;
+  await user.save();
+
+  await sendEmail({
+    template: 'passwordReset',
+    to: user.email,
+    payload: {
+      name: user.name,
+      resetUrl: absolute(`/reset-password?token=${encodeURIComponent(token)}`, env.APP_URL),
+      expiresInMinutes: RESET_TTL_MINUTES,
+    },
+    relatedTo: { type: 'user', id: String(user._id) },
+  });
+}
+
+/**
+ * Sets a new password from a reset link.
+ *
+ * The link works once. Every session is signed out — a reset is often the
+ * response to someone else having the password — and a lockout from failed
+ * attempts is lifted, since proving control of the mailbox is the stronger
+ * signal.
+ */
+export async function resetPassword(token: string, newPassword: string): Promise<UserDocument> {
+  const user = await UserModel.findOne({
+    'passwordReset.tokenHash': hashToken(token),
+    'passwordReset.expiresAt': { $gt: new Date() },
+  })
+    .select('+passwordHash +passwordReset')
+    .exec();
+
+  if (!user || user.status !== 'active') {
+    throw new AppError(422, ErrorCode.VALIDATION_FAILED, 'This reset link has expired or has already been used. Ask for a new one.', {
+      fields: { token: ['Expired or already used.'] },
+    });
+  }
+
+  user.passwordHash = await hashPassword(newPassword);
+  user.passwordReset = { tokenHash: null, expiresAt: null, requestedAt: null } as never;
+  user.tokenVersion += 1;
+  user.failedLoginCount = 0;
+  user.lockedUntil = null;
+  await user.save();
+
+  await revokeAllSessions(String(user._id), 'password_reset');
+  await sendPasswordChangedNotice(user);
+  return user;
 }

@@ -43,6 +43,18 @@ export const acceptInvitationSchema = {
   }),
 };
 
+export const forgotPasswordSchema = {
+  body: strictObject({ email: emailSchema }),
+};
+
+export const resetPasswordSchema = {
+  body: strictObject({ token: z.string().min(20).max(200), password: passwordSchema }),
+};
+
+export const invitationPreviewSchema = {
+  body: strictObject({ token: z.string().min(20).max(200) }),
+};
+
 export const changePasswordSchema = {
   body: strictObject({
     currentPassword: z.string().min(1, 'Enter your current password.'),

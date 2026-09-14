@@ -9,6 +9,9 @@ import {
   refresh,
   logout,
   acceptInvitation,
+  invitationPreview,
+  forgotPassword,
+  completePasswordReset,
   me,
   updatePassword,
 } from './auth.controller.js';
@@ -18,6 +21,9 @@ import {
   selectTenantSchema,
   acceptInvitationSchema,
   changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  invitationPreviewSchema,
 } from './auth.schema.js';
 
 /**
@@ -44,6 +50,12 @@ authRoutes.post(
   validate(acceptInvitationSchema),
   asyncHandler(acceptInvitation),
 );
+
+// A POST body rather than a query string, so the token stays out of access logs.
+authRoutes.post('/invitation', authLimiter, markPublic(), validate(invitationPreviewSchema), asyncHandler(invitationPreview));
+
+authRoutes.post('/forgot-password', authLimiter, markPublic(), validate(forgotPasswordSchema), asyncHandler(forgotPassword));
+authRoutes.post('/reset-password', authLimiter, markPublic(), validate(resetPasswordSchema), asyncHandler(completePasswordReset));
 
 authRoutes.post(
   '/select-tenant',

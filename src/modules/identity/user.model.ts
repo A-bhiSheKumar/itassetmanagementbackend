@@ -38,6 +38,20 @@ const userSchema = markSchemaGlobal(
 
       defaultTenantId: { type: String, default: null },
 
+      /**
+       * One outstanding reset at a time; a new request replaces it. Only the
+       * hash is stored, and never selected unless asked for.
+       */
+      passwordReset: {
+        type: {
+          tokenHash: { type: String, default: null },
+          expiresAt: { type: Date, default: null },
+          requestedAt: { type: Date, default: null },
+        },
+        default: () => ({}),
+        select: false,
+      },
+
       lastLoginAt: { type: Date, default: null },
       failedLoginCount: { type: Number, default: 0 },
       lockedUntil: { type: Date, default: null },
@@ -53,6 +67,10 @@ const userSchema = markSchemaGlobal(
  */
 userSchema.index({ email: 1 }, { unique: true, collation: { locale: 'en', strength: 2 } });
 userSchema.index({ tokenVersion: 1 });
+userSchema.index(
+  { 'passwordReset.tokenHash': 1 },
+  { unique: true, partialFilterExpression: { 'passwordReset.tokenHash': { $type: 'string' } } },
+);
 
 export type User = InferSchemaType<typeof userSchema>;
 export type UserDocument = HydratedDocument<User>;

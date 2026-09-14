@@ -31,6 +31,7 @@ export const transferSchema = {
     assigneeType: z.enum(['person', 'location', 'asset']).optional(),
     notes: z.string().max(1000).optional(),
     condition: condition.optional(),
+    requireAcknowledgement: z.boolean().optional(),
   }),
 };
 
@@ -45,5 +46,7 @@ export const listAssignmentsSchema = {
 export const acknowledgeSchema = {
   body: strictObject({ token: z.string().min(20).max(200) }),
 };
+
+export const assignmentIdSchema = { params: strictObject({ id: idSchema }) };
 
 export const personIdSchema = { params: strictObject({ id: idSchema }) };

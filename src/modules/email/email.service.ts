@@ -3,7 +3,7 @@ import { getContext } from '../../core/context/index.js';
 import { logger } from '../../core/logging/index.js';
 import { QUEUE, getJobQueue } from '../../core/jobs/index.js';
 import { EmailMessageModel, SuppressionModel, type EmailMessageDocument } from './email.model.js';
-import { buildContent, type TemplateName, type TemplatePayloads } from './templates.js';
+import { buildContent, SENSITIVE_TEMPLATES, type TemplateName, type TemplatePayloads } from './templates.js';
 import { render } from './render.js';
 import { RecordingTransport, ResendTransport, type EmailTransport } from './transport.js';
 
@@ -119,6 +119,7 @@ export async function deliverEmail(messageId: string): Promise<void> {
   // Suppressed since it was queued — a bounce from an earlier message arrived.
   if (await isSuppressed(message.to)) {
     message.status = 'suppressed';
+    redactIfSensitive(message);
     await message.save();
     return;
   }
@@ -160,6 +161,7 @@ export async function deliverEmail(messageId: string): Promise<void> {
     message.deliveredTo = deliverTo;
     message.sentAt = new Date();
     message.lastError = null;
+    redactIfSensitive(message);
     await message.save();
     return;
   }
@@ -168,6 +170,7 @@ export async function deliverEmail(messageId: string): Promise<void> {
 
   if (!outcome.retryable) {
     message.status = 'failed';
+    redactIfSensitive(message);
     await message.save();
     logger.error({ messageId, error: outcome.error }, 'Email permanently failed');
     return;
@@ -176,6 +179,19 @@ export async function deliverEmail(messageId: string): Promise<void> {
   await message.save();
   // The queue owns the retry schedule and dead-letters after the last attempt.
   throw new Error(outcome.error);
+}
+
+const REDACTED = '[Removed after delivery: this message contained a single-use link.]';
+
+/**
+ * Erases the body of a message that carried a credential, once nothing will
+ * send it again. The subject, recipient and outcome stay, so "did the
+ * invitation go out?" is still answerable.
+ */
+function redactIfSensitive(message: EmailMessageDocument): void {
+  if (!SENSITIVE_TEMPLATES.has(message.template as TemplateName)) return;
+  message.html = REDACTED;
+  message.text = REDACTED;
 }
 
 /** Records a delivery event from Resend's webhook. Safe to receive twice. */

@@ -1,7 +1,8 @@
 import type { Request, Response } from 'express';
 import { ok, created, noContent } from '../../core/http/index.js';
 import { getContextOrThrow, patchContext, runWithContext } from '../../core/context/index.js';
-import { UnauthenticatedError, NotFoundError } from '../../core/errors/index.js';
+import { UnauthenticatedError, NotFoundError, ValidationError } from '../../core/errors/index.js';
+import { QUEUE, getJobQueue } from '../../core/jobs/index.js';
 import {
   signUserToken,
   signTenantToken,
@@ -17,7 +18,9 @@ import {
   listMembershipsForUser,
   permissionsForMembership,
   MembershipModel,
+  InvitationModel,
   findInvitationByToken,
+  userDirectory,
 } from '../memberships/index.js';
 import { incrementUsage } from '../subscriptions/index.js';
 import {
@@ -28,6 +31,8 @@ import {
   rotateRefreshToken,
   revokeRefreshToken,
   changePassword,
+  findUserByEmail,
+  resetPassword,
 } from './identity.service.js';
 
 function setRefreshCookie(res: Response, token: string): void {
@@ -208,13 +213,27 @@ export async function acceptInvitation(req: Request, res: Response): Promise<voi
   if (!invitation) throw new NotFoundError('Invitation');
 
   const tenantId = invitation.tenantId as string;
-  const { findUserByEmail } = await import('./identity.service.js');
-
   let user = await findUserByEmail(invitation.email as string);
 
-  if (!user) {
+  if (user) {
+    /*
+     * The address already has an account, so the invitation joins it to this
+     * organisation — but only once its owner proves it is them. Signing in on
+     * the strength of the link alone would hand whoever holds the link a
+     * session for an account that may belong to several other organisations.
+     */
+    if (!password) {
+      throw new ValidationError('Enter the password for your existing account to accept.', {
+        password: ['Enter your password.'],
+      });
+    }
+    user = await authenticate(invitation.email as string, password);
+  } else {
     if (!password || !name) {
-      throw new UnauthenticatedError('Set a name and password to accept this invitation.');
+      throw new ValidationError('Choose a name and password to accept this invitation.', {
+        ...(name ? {} : { name: ['Enter your name.'] }),
+        ...(password ? {} : { password: ['Choose a password.'] }),
+      });
     }
     user = await createUser({ email: invitation.email as string, password, name });
   }
@@ -232,14 +251,9 @@ export async function acceptInvitation(req: Request, res: Response): Promise<voi
         joinedAt: new Date(),
       });
 
-      await MembershipModel.collection.updateOne(
-        { _id: invitation._id },
-        { $set: { acceptedAt: new Date() } },
-      );
     },
   );
 
-  const { InvitationModel } = await import('../memberships/index.js');
   await InvitationModel.collection.updateOne(
     { _id: invitation._id },
     { $set: { acceptedAt: new Date() } },
@@ -251,7 +265,61 @@ export async function acceptInvitation(req: Request, res: Response): Promise<voi
   ok(res, {
     accessToken: signUserToken({ userId, tokenVersion: user.tokenVersion }),
     user: { id: userId, email: user.email, name: user.name },
+    // So the client can open the organisation they just joined, not a picker.
+    tenantId,
   });
+}
+
+/**
+ * What an invitation link is for, before anyone acts on it.
+ *
+ * The accept page needs the organisation's name and whether to ask for a new
+ * password or an existing one. Only the holder of the link can ask, and the
+ * link was sent to the invited address.
+ */
+export async function invitationPreview(req: Request, res: Response): Promise<void> {
+  const { token } = req.body as { token: string };
+
+  const invitation = await findInvitationByToken(token);
+  if (!invitation) throw new NotFoundError('Invitation');
+
+  const [tenant, user, inviter] = await Promise.all([
+    findTenantById(invitation.tenantId as string),
+    findUserByEmail(invitation.email as string),
+    userDirectory().namesFor([invitation.invitedBy as string]),
+  ]);
+
+  ok(res, {
+    email: invitation.email,
+    organisationName: tenant?.name ?? null,
+    inviterName: inviter.get(invitation.invitedBy as string)?.name ?? null,
+    hasAccount: user !== null,
+    expiresAt: invitation.expiresAt,
+  });
+}
+
+/**
+ * Always the same answer, whether or not the address has an account.
+ *
+ * The lookup and the email happen in a job. Doing them here would make the
+ * response for a real account measurably slower than for an unknown one.
+ */
+export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  const { email } = req.body as { email: string };
+  await getJobQueue().add(QUEUE.account, { task: 'password-reset', email });
+  res.status(202).json({
+    success: true,
+    data: { message: 'If that address has an account, a reset link is on its way.' },
+    meta: { requestId: getContextOrThrow().requestId },
+  });
+}
+
+export async function completePasswordReset(req: Request, res: Response): Promise<void> {
+  const { token, password } = req.body as { token: string; password: string };
+  await resetPassword(token, password);
+  // Any refresh cookie on this device belonged to a session that was just revoked.
+  res.clearCookie(REFRESH_COOKIE, refreshCookieAttributes(isProduction));
+  noContent(res);
 }
 
 /** The current user, their organisations, and their effective permissions. */

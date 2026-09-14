@@ -3,10 +3,10 @@ import { ok, created, list } from '../../core/http/index.js';
 import { NotFoundError } from '../../core/errors/index.js';
 import { AssetModel } from '../assets/index.js';
 import { PersonModel, LocationModel } from '../people/index.js';
-import { isProduction } from '../../config/index.js';
 import type { AssignmentDocument } from './assignment.model.js';
 import { AssignmentModel } from './assignment.model.js';
 import * as service from './assignment.service.js';
+import * as receipts from './receipts.service.js';
 
 function present(assignment: AssignmentDocument) {
   return {
@@ -122,9 +122,22 @@ async function withNames(rows: AssignmentDocument[]) {
   });
 }
 
+/** Public: the confirmation link in the email is the credential. */
 export async function acknowledge(req: Request, res: Response): Promise<void> {
   const { token } = req.body as { token: string };
-  ok(res, present(await service.acknowledgeAssignment(token)));
+  const confirmed = await receipts.confirmReceipt(token);
+  // Only what the confirmation page needs — not the assignment record, which
+  // carries internal ids and notes a holder was never meant to read.
+  ok(res, { confirmedAt: confirmed.acknowledgement?.acknowledgedAt ?? null });
+}
+
+export async function acknowledgementPreview(req: Request, res: Response): Promise<void> {
+  const { token } = req.body as { token: string };
+  ok(res, await receipts.previewReceipt(token));
+}
+
+export async function remind(req: Request, res: Response): Promise<void> {
+  ok(res, await receipts.remindAssignment(req.params.id!));
 }
 
 /** Chain of custody for one asset. */
@@ -154,8 +167,4 @@ export async function heldBy(req: Request, res: Response): Promise<void> {
   ok(res, rows.map(present));
 }
 
-// Development only: the acknowledgement email lands in M4. Until then the
-// token has to reach the test somehow, and it must never leak in production.
-export function includeTokenInDev(token: string | null): Record<string, string> {
-  return !isProduction && token ? { acknowledgementToken: token } : {};
-}
+

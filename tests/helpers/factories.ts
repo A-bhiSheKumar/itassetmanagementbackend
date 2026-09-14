@@ -3,6 +3,7 @@ import type { Server } from 'node:http';
 import { ulid } from 'ulid';
 import { seedPlans } from '../../src/modules/subscriptions/index.js';
 import { runAsSystem } from '../../src/core/context/index.js';
+import { emailedToken } from './email.js';
 
 /**
  * Test factories that go through the real API.
@@ -113,7 +114,7 @@ export async function seedMember(
   }
 
   const accepted = await request(app).post('/api/v1/auth/accept-invitation').send({
-    token: invite.body.data.inviteToken,
+    token: emailedToken(email, '/accept-invitation'),
     password,
     name: `${roleKey} member`,
   });
