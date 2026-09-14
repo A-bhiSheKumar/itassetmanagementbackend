@@ -33,6 +33,8 @@ const GLOBAL_MODELS: Record<string, string> = {
   ScheduleRun: 'Platform schedules (nightly scans, outbox sweep) span every tenant.',
   Lock: 'Taken before a tenant context exists; the key itself encodes the tenant where it matters.',
   RateLimitHit: 'Counts requests by IP, user or tenant, often before authentication has resolved a tenant.',
+  EmailMessage: 'Some mail belongs to a person, not a tenant (a password reset precedes choosing one); tenantRef records the organisation as a reference.',
+  EmailSuppression: 'A bounced or complaining address harms the shared sending domain for every tenant.',
 };
 
 /**

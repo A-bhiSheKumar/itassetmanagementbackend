@@ -132,14 +132,30 @@ describe('configuration', () => {
     expect(JSON.stringify(result.error?.issues)).toContain('S3_BUCKET');
   });
 
-  it('accepts a complete production S3 configuration', () => {
-    const result = envSchema.safeParse({
-      ...base,
-      NODE_ENV: 'production',
-      STORAGE_DRIVER: 's3',
-      S3_BUCKET: 'itam-files',
-      S3_REGION: 'ap-south-1',
-    });
-    expect(result.success).toBe(true);
+  const production = {
+    ...base,
+    NODE_ENV: 'production',
+    STORAGE_DRIVER: 's3',
+    S3_BUCKET: 'itam-files',
+    S3_REGION: 'ap-south-1',
+    RESEND_API_KEY: 're_test',
+    RESEND_WEBHOOK_SECRET: 'whsec_dGVzdA==',
+    MAIL_FROM: 'IT Assets <notifications@updates.example.com>',
+    APP_URL: 'https://assets.example.com',
+  };
+
+  it('accepts a complete production configuration', () => {
+    const result = envSchema.safeParse(production);
+    expect(result.success, JSON.stringify(result.error?.issues)).toBe(true);
+  });
+
+  it.each([
+    ['no Resend key', { RESEND_API_KEY: undefined }],
+    ['no webhook secret, so bounces are never suppressed', { RESEND_WEBHOOK_SECRET: undefined }],
+    ['the Resend test sender', { MAIL_FROM: 'Test <onboarding@resend.dev>' }],
+    ['links to plain http', { APP_URL: 'http://assets.example.com' }],
+    ['a development redirect left on', { MAIL_REDIRECT_TO: 'dev@example.com' }],
+  ])('refuses production email with %s', (_label, override) => {
+    expect(envSchema.safeParse({ ...production, ...override }).success).toBe(false);
   });
 });

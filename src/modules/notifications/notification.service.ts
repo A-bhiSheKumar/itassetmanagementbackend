@@ -1,7 +1,7 @@
 import { getContext } from '../../core/context/index.js';
 import { logger } from '../../core/logging/index.js';
 import { NotificationModel, type NotificationType } from './notification.model.js';
-import { getEmailTransport } from './channels.js';
+import { sendEmail } from '../email/index.js';
 
 /**
  * The central dispatcher.
@@ -50,17 +50,18 @@ export async function notify(input: NotifyInput): Promise<boolean> {
   }
 
   if (channels.includes('email') && input.recipientEmail) {
-    // Never lets a mail failure fail the caller — a notification is a
-    // side effect, and a warranty scan must not abort because SMTP blipped.
+    // Queued through the email log, never sent inline: a notification is a side
+    // effect, and a warranty scan must not abort because Resend blipped.
     try {
-      await getEmailTransport().send({
+      await sendEmail({
+        template: 'notification',
         to: input.recipientEmail,
-        subject: input.title,
-        body: input.body ?? input.title,
-        reference: input.dedupeKey,
+        payload: { title: input.title, body: input.body ?? input.title, actionUrl: input.actionUrl ?? null },
+        dedupeKey: input.dedupeKey ? `notification:${input.dedupeKey}` : undefined,
+        relatedTo: input.entityRef,
       });
     } catch (err) {
-      logger.error({ err, to: input.recipientEmail }, 'Email delivery failed');
+      logger.error({ err, to: input.recipientEmail }, 'Could not queue a notification email');
     }
   }
 

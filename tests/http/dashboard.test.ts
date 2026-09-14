@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { useTestServer } from '../helpers/testServer.js';
 import { ensurePlansSeeded, seedTenant, type SeededTenant } from '../helpers/factories.js';
-import { recordingTransport } from '../../src/modules/notifications/index.js';
+import { recordingTransport } from '../../src/modules/email/index.js';
 import { scanExpiringWarranties } from '../../src/modules/reports/index.js';
 
 const app = createApp();

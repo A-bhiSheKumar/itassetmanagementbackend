@@ -8,6 +8,7 @@ import {
   reconcileAll,
 } from './modules/reports/index.js';
 import { registerImportJobHandler } from './modules/imports/index.js';
+import { deliverEmail } from './modules/email/index.js';
 
 /**
  * The composition root for background work.
@@ -50,6 +51,10 @@ export function registerJobHandlers(): void {
   );
 
   registerImportJobHandler();
+
+  // Several at once: each is one HTTP call to Resend, and a backlog of
+  // invitations should clear in seconds rather than one by one.
+  queue.register(QUEUE.email, ({ messageId }) => deliverEmail(messageId), { concurrency: 5, leaseMs: 60_000 });
 }
 
 /**

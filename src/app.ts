@@ -77,7 +77,10 @@ export function createApp(): Express {
    * upload must not depend on the client choosing a particular header.
    */
   const isRawUpload = (req: { method?: string; url?: string }): boolean =>
-    req.method === 'PUT' && (req.url ?? '').startsWith('/api/v1/documents/upload');
+    (req.method === 'PUT' && (req.url ?? '').startsWith('/api/v1/documents/upload')) ||
+    // Webhook signatures are computed over the exact bytes sent; a parsed and
+    // re-serialised body would fail every legitimate one.
+    (req.method === 'POST' && (req.url ?? '').startsWith('/api/v1/webhooks/'));
 
   app.use(
     express.json({

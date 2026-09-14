@@ -12,6 +12,8 @@ export const QUEUE = {
   scheduled: 'scheduled',
   /** Import commits. Serialised per tenant by a lock, parallel across tenants. */
   imports: 'imports',
+  /** Email delivery, one message per job, retried with backoff. */
+  email: 'email',
 } as const;
 
 export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
@@ -20,6 +22,7 @@ export interface JobPayloads {
   outbox: { limit?: number };
   scheduled: { task: 'metrics' | 'warranties' | 'storage-sweep' | 'reconcile' | 'all' };
   imports: { importJobId: string; tenantId: string };
+  email: { messageId: string };
 }
 
 export interface JobOptions {

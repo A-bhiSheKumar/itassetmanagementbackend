@@ -13,12 +13,4 @@ export {
   currentRecipientId,
   type NotifyInput,
 } from './notification.service.js';
-export {
-  getEmailTransport,
-  setEmailTransport,
-  recordingTransport,
-  RecordingEmailTransport,
-  type EmailTransport,
-  type EmailMessage,
-} from './channels.js';
 export { notificationRoutes } from './notification.routes.js';

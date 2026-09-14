@@ -70,6 +70,24 @@ export const envSchema = z.object({
 
   /** The jobs function to wake after an enqueue, on Lambda. Unset elsewhere. */
   JOBS_FUNCTION_NAME: z.string().optional(),
+
+  // --- Email ---------------------------------------------------------------
+  /** Absent: mail is recorded, not sent — safe for development and tests. */
+  RESEND_API_KEY: z.string().optional(),
+  /** Verifies Resend's delivery webhooks (bounces, complaints). `whsec_…`. */
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
+  MAIL_FROM: z.string().default('IT Asset Manager <onboarding@resend.dev>'),
+  MAIL_REPLY_TO: z.string().optional(),
+  /**
+   * Development only: every message goes to this address instead of its real
+   * recipient. Refused in production, where it would silently divert customer
+   * mail to one inbox.
+   */
+  MAIL_REDIRECT_TO: z.string().email().optional(),
+
+  /** Links in email point here. */
+  APP_URL: z.string().url().default('http://localhost:5173'),
+  APP_NAME: z.string().default('IT Asset Manager'),
 }).superRefine((value, ctx) => {
   if (value.STORAGE_DRIVER === 's3') {
     for (const key of ['S3_BUCKET', 'S3_REGION'] as const) {
@@ -84,6 +102,22 @@ export const envSchema = z.object({
    */
   if (value.NODE_ENV === 'production' && value.STORAGE_DRIVER !== 's3') {
     ctx.addIssue({ code: 'custom', path: ['STORAGE_DRIVER'], message: 'must be s3 in production' });
+  }
+
+  /*
+   * Email in production: refused unless it can actually send, send from a real
+   * domain, link to a real app, and learn about bounces. Each missing piece fails
+   * silently otherwise — invitations that never arrive, links to localhost, or a
+   * sending domain whose reputation decays because hard bounces keep being mailed.
+   */
+  if (value.NODE_ENV === 'production') {
+    const fail = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+
+    if (!value.RESEND_API_KEY) fail('RESEND_API_KEY', 'is required in production');
+    if (!value.RESEND_WEBHOOK_SECRET) fail('RESEND_WEBHOOK_SECRET', 'is required in production, or bounces are never suppressed');
+    if (/@resend\.dev>?$/i.test(value.MAIL_FROM)) fail('MAIL_FROM', 'must be an address on your verified sending domain');
+    if (!value.APP_URL.startsWith('https://')) fail('APP_URL', 'must be https in production');
+    if (value.MAIL_REDIRECT_TO) fail('MAIL_REDIRECT_TO', 'must not be set in production');
   }
 });
 

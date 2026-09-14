@@ -62,6 +62,9 @@ describe('route guards', () => {
       'POST /api/v1/auth/logout',
       'POST /api/v1/auth/refresh',
       'POST /api/v1/auth/register',
+      // Resend's delivery events. Resend has no session; the request is
+      // authorised by a Svix HMAC over the raw body, checked before it is read.
+      'POST /api/v1/webhooks/resend',
       // The presigned upload that pairs with the download above.
       'PUT /api/v1/documents/upload',
     ]);
