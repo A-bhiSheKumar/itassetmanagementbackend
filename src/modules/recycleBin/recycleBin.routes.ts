@@ -34,6 +34,8 @@ const PLURAL: Record<BinType, string> = {
   location: 'locations',
   department: 'departments',
   document: 'documents',
+  vendor: 'vendors',
+  licence: 'licences',
 };
 
 const restoreSchema = { params: strictObject({ id: idSchema }) };

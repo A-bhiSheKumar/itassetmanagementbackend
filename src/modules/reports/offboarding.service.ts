@@ -3,6 +3,7 @@ import { PersonModel } from '../people/index.js';
 import { AssetModel } from '../assets/index.js';
 import { activeAssignmentsFor } from '../assignments/index.js';
 import { notify } from '../notifications/index.js';
+import { revokeAllSeatsFor, seatsFor } from '../licences/index.js';
 
 /**
  * Offboarding.
@@ -31,6 +32,11 @@ export interface OffboardingChecklist {
   personName: string;
   status: string;
   outstanding: OutstandingItem[];
+  /**
+   * Software seats they use. Not a blocker — unlike a laptop, a seat can be
+   * taken back without anyone's help — so completing offboarding frees them.
+   */
+  licenceSeats: Array<{ seatId: string; licenceId: string; licenceName: string | null }>;
   /** True only when nothing is left to collect. */
   clearToDeactivate: boolean;
 }
@@ -60,11 +66,14 @@ export async function offboardingChecklist(personId: string): Promise<Offboardin
     });
   }
 
+  const seats = await seatsFor(personId);
+
   return {
     personId,
     personName: `${person.firstName} ${person.lastName}`,
     status: person.status,
     outstanding,
+    licenceSeats: seats.map((s) => ({ seatId: s.id, licenceId: s.licenceId, licenceName: s.licenceName })),
     clearToDeactivate: outstanding.length === 0,
   };
 }
@@ -131,5 +140,8 @@ export async function completeOffboarding(
   person.endDate = person.endDate ?? new Date();
   await person.save();
 
-  return { ...checklist, status: 'inactive' };
+  // A leaver's seats go back into the pool; paying for them another month helps nobody.
+  await revokeAllSeatsFor(personId);
+
+  return { ...checklist, status: 'inactive', licenceSeats: [] };
 }

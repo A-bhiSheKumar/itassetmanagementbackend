@@ -4,6 +4,7 @@ import { logger } from './core/logging/index.js';
 import {
   rebuildAllMetrics,
   scanExpiringWarranties,
+  scanLicenceRenewals,
   sweepStorage,
   reconcileAll,
   purgeRecycleBins,
@@ -45,6 +46,7 @@ export function registerJobHandlers(): void {
       if (task === 'reconcile' || task === 'all') await reconcileAll({ repair: true });
       if (task === 'metrics' || task === 'all') await rebuildAllMetrics();
       if (task === 'warranties' || task === 'all') await scanExpiringWarranties();
+      if (task === 'renewals' || task === 'all') await scanLicenceRenewals();
       if (task === 'storage-sweep' || task === 'all') await sweepStorage();
       // Not part of 'all': it has its own hourly schedule.
       if (task === 'recycle-bin-purge') await purgeRecycleBins();

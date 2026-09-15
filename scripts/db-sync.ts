@@ -22,6 +22,9 @@ import '../src/core/jobs/index.js';
 import '../src/core/locks/index.js';
 import '../src/core/http/index.js';
 import { seedPlans } from '../src/modules/subscriptions/index.js';
+import { syncSystemRolePermissions } from '../src/modules/roles/index.js';
+import { TenantModel } from '../src/modules/tenants/index.js';
+import { runAsSystem, withoutTenantScope } from '../src/core/context/index.js';
 
 const prune = process.argv.includes('--prune');
 
@@ -58,6 +61,17 @@ async function main(): Promise<void> {
 
   await seedPlans();
   console.log('Plans seeded.');
+
+  // Permissions added in this release reach organisations created before it.
+  const tenants = await runAsSystem({ requestId: 'db-sync' }, () =>
+    withoutTenantScope('db-sync: role permissions', () => TenantModel.find({}).select('_id name').lean()),
+  );
+  let updated = 0;
+  for (const tenant of tenants) {
+    const changed = await runAsSystem({ requestId: 'db-sync', tenantId: String(tenant._id) }, () => syncSystemRolePermissions());
+    if (changed.length > 0) updated += 1;
+  }
+  console.log(`System roles checked in ${tenants.length} organisation(s); ${updated} updated.`);
 
   await disconnectDatabase();
 

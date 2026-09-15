@@ -22,7 +22,7 @@ export type QueueName = (typeof QUEUE)[keyof typeof QUEUE];
 
 export interface JobPayloads {
   outbox: { limit?: number };
-  scheduled: { task: 'metrics' | 'warranties' | 'storage-sweep' | 'reconcile' | 'recycle-bin-purge' | 'all' };
+  scheduled: { task: 'metrics' | 'warranties' | 'renewals' | 'storage-sweep' | 'reconcile' | 'recycle-bin-purge' | 'all' };
   imports: { importJobId: string; tenantId: string };
   email: { messageId: string };
   account: { task: 'password-reset'; email: string };

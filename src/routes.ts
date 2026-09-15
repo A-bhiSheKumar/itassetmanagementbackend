@@ -14,6 +14,9 @@ import { documentRoutes } from './modules/documents/index.js';
 import { notificationRoutes } from './modules/notifications/index.js';
 import { savedViewRoutes } from './modules/savedViews/index.js';
 import { recycleBinRoutes } from './modules/recycleBin/index.js';
+import { vendorRoutes } from './modules/vendors/index.js';
+import { maintenanceRoutes } from './modules/maintenance/index.js';
+import { licenceRoutes, personLicenceRoutes } from './modules/licences/index.js';
 import { emailWebhookRoutes } from './modules/email/index.js';
 import { dashboardRoutes, offboardingRoutes } from './modules/reports/index.js';
 import { importRoutes, exportRoutes } from './modules/imports/index.js';
@@ -45,6 +48,7 @@ apiRouter.use('/roles', roleRoutes);
 // Offboarding mounts under a person, and before the people router so
 // /people/:id/offboarding resolves ahead of /people/:id.
 apiRouter.use('/people/:id', offboardingRoutes);
+apiRouter.use('/people/:id', personLicenceRoutes);
 apiRouter.use('/people', peopleRoutes);
 apiRouter.use('/departments', departmentRoutes);
 apiRouter.use('/locations', locationRoutes);
@@ -65,6 +69,9 @@ apiRouter.use('/documents', documentRoutes);
 apiRouter.use('/notifications', notificationRoutes);
 apiRouter.use('/saved-views', savedViewRoutes);
 apiRouter.use('/recycle-bin', recycleBinRoutes);
+apiRouter.use('/vendors', vendorRoutes);
+apiRouter.use('/maintenance', maintenanceRoutes);
+apiRouter.use('/licences', licenceRoutes);
 apiRouter.use('/webhooks', emailWebhookRoutes);
 apiRouter.use('/dashboard', dashboardRoutes);
 apiRouter.use('/imports', importRoutes);

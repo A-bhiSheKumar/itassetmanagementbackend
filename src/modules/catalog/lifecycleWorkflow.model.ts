@@ -113,7 +113,9 @@ export const DEFAULT_WORKFLOW = {
     { from: 'deployed', to: 'in_stock', label: 'Return to stock', guards: ['no_active_assignment'] },
     { from: 'in_stock', to: 'maintenance', label: 'Send for maintenance' },
     { from: 'deployed', to: 'maintenance', label: 'Send for maintenance' },
-    { from: 'maintenance', to: 'in_stock', label: 'Return from maintenance' },
+    { from: 'maintenance', to: 'in_stock', label: 'Return from maintenance', guards: ['no_active_assignment'] },
+    // An assigned laptop sent for repair goes back to its holder, not to the shelf.
+    { from: 'maintenance', to: 'deployed', label: 'Back to its holder', guards: ['has_assignment'] },
     {
       from: 'in_stock',
       to: 'retired',

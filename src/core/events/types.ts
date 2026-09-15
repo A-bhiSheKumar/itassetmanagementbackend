@@ -17,6 +17,10 @@ export const EVENT_TYPES = [
   'asset.transferred',
   'asset.transitioned',
   'asset.acknowledged',
+  'asset.maintenance_scheduled',
+  'asset.maintenance_started',
+  'asset.maintenance_completed',
+  'asset.maintenance_cancelled',
   'person.created',
   'person.deactivated',
 ] as const;

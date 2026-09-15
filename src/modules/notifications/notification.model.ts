@@ -6,6 +6,7 @@ export const NOTIFICATION_TYPES = [
   'asset.acknowledgement_requested',
   'warranty.expiring',
   'maintenance.due',
+  'licence.renewal',
   'offboarding.outstanding',
   'import.completed',
   'import.failed',

@@ -1,6 +1,8 @@
 import { AssetModel } from '../assets/index.js';
 import { AssignmentModel } from '../assignments/index.js';
 import { PersonModel } from '../people/index.js';
+import { MaintenanceModel, overdueFilter as maintenanceOverdue } from '../maintenance/index.js';
+import { LicenceModel } from '../licences/index.js';
 import { daysUntil } from '../../shared/format.js';
 
 /**
@@ -31,6 +33,12 @@ export interface ExpiringWarranty {
 const HORIZON_DAYS = 30;
 
 const OVERDUE_FILTER = () => ({ status: 'active', dueAt: { $type: 'date', $lt: new Date() } });
+
+/** Active licences ending inside the horizon, or ended within it — a lapsed licence is still a problem. */
+const RENEWAL_FILTER = () => ({
+  status: 'active',
+  expiresAt: { $type: 'date', $gte: new Date(Date.now() - HORIZON_DAYS * 86_400_000), $lte: new Date(Date.now() + HORIZON_DAYS * 86_400_000) },
+});
 
 const DAMAGED_FILTER = { condition: 'damaged', lifecycleState: { $nin: ['disposed', 'retired'] } };
 
@@ -68,8 +76,10 @@ export async function warrantyPipeline(horizonDays = HORIZON_DAYS): Promise<Expi
 export async function needsAttention(): Promise<AttentionRow[]> {
   const horizon = new Date(Date.now() + HORIZON_DAYS * 86_400_000);
 
-  const [overdue, expiring, unacknowledged, offboarding, damaged] = await Promise.all([
+  const [overdue, maintenanceDue, renewals, expiring, unacknowledged, offboarding, damaged] = await Promise.all([
     AssignmentModel.countDocuments(OVERDUE_FILTER()),
+    MaintenanceModel.countDocuments(maintenanceOverdue()),
+    LicenceModel.countDocuments(RENEWAL_FILTER()),
     // See the note in warrantyPipeline: $type is what lets the partial index
     // serve this. It is the difference between 90ms and 2ms here.
     AssetModel.countDocuments({
@@ -97,6 +107,20 @@ export async function needsAttention(): Promise<AttentionRow[]> {
       tone: 'danger',
     },
     {
+      key: 'maintenance',
+      label: 'Maintenance past its date',
+      count: maintenanceDue,
+      href: '/attention?kind=maintenance',
+      tone: 'warning',
+    },
+    {
+      key: 'renewals',
+      label: `Licences renewing or lapsed within ${HORIZON_DAYS} days`,
+      count: renewals,
+      href: '/attention?kind=renewals',
+      tone: 'warning',
+    },
+    {
       key: 'warranties',
       label: `Warranties ending within ${HORIZON_DAYS} days`,
       count: expiring,
@@ -120,7 +144,7 @@ export async function needsAttention(): Promise<AttentionRow[]> {
 
 // ── The inbox ───────────────────────────────────────────────────────────────
 
-export const ATTENTION_KINDS = ['overdue', 'offboarding', 'warranties', 'damaged', 'acknowledgements'] as const;
+export const ATTENTION_KINDS = ['overdue', 'offboarding', 'maintenance', 'renewals', 'warranties', 'damaged', 'acknowledgements'] as const;
 export type AttentionKind = (typeof ATTENTION_KINDS)[number];
 
 /**
@@ -141,6 +165,8 @@ export interface AttentionItem {
   personId: string | null;
   personName: string | null;
   assignmentId: string | null;
+  /** The maintenance record or licence the item is about, for those kinds. */
+  recordId?: string | null;
 }
 
 const ITEM_LIMIT = 200;
@@ -202,6 +228,44 @@ async function assignmentItems(kind: 'overdue' | 'acknowledgements'): Promise<At
 export async function attentionItems(kind: AttentionKind): Promise<AttentionItem[]> {
   if (kind === 'overdue' || kind === 'acknowledgements') return assignmentItems(kind);
 
+  if (kind === 'maintenance') {
+    const rows = await MaintenanceModel.find(maintenanceOverdue()).sort({ scheduledFor: 1 }).limit(ITEM_LIMIT).lean();
+    const lookup = await names([], rows.map((r) => r.assetId));
+    return rows.map((r) => ({
+      id: String(r._id),
+      kind,
+      title: r.title,
+      detail: [lookup.asset.get(r.assetId)?.name, lookup.asset.get(r.assetId)?.tag].filter(Boolean).join(' · '),
+      date: r.scheduledFor ?? null,
+      days: r.scheduledFor ? daysUntil(r.scheduledFor) : null,
+      assetId: r.assetId,
+      personId: null,
+      personName: null,
+      assignmentId: null,
+      recordId: String(r._id),
+    }));
+  }
+
+  if (kind === 'renewals') {
+    const rows = await LicenceModel.find(RENEWAL_FILTER()).sort({ expiresAt: 1 }).limit(ITEM_LIMIT).lean();
+    return rows.map((r) => ({
+      id: String(r._id),
+      kind,
+      title: r.name,
+      detail: [
+        r.autoRenew ? 'Renews automatically' : 'Does not renew automatically',
+        r.seats != null ? `${r.seatsUsed} of ${r.seats} seats used` : `${r.seatsUsed} seats used`,
+      ].join(' · '),
+      date: r.expiresAt ?? null,
+      days: r.expiresAt ? daysUntil(r.expiresAt) : null,
+      assetId: null,
+      personId: null,
+      personName: null,
+      assignmentId: null,
+      recordId: String(r._id),
+    }));
+  }
+
   if (kind === 'warranties') {
     const rows = await warrantyPipeline();
     return rows.map((r) => ({
@@ -209,7 +273,7 @@ export async function attentionItems(kind: AttentionKind): Promise<AttentionItem
       kind,
       title: r.name,
       detail: r.assetTag,
-      date: r.expiresAt,
+      date: r.expiresAt ?? null,
       days: r.daysRemaining,
       assetId: r.assetId,
       personId: null,

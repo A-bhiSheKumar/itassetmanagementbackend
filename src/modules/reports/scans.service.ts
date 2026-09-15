@@ -7,6 +7,8 @@ import { UserModel } from '../identity/index.js';
 import { notify } from '../notifications/index.js';
 import { sweepAbandonedUploads } from '../documents/index.js';
 import { purgeExpired } from '../recycleBin/index.js';
+import { LicenceModel } from '../licences/index.js';
+import { daysUntil } from '../../shared/format.js';
 import { warrantyPipeline } from './attention.service.js';
 import { rebuildDailyMetrics } from './metrics.service.js';
 
@@ -99,6 +101,60 @@ export async function scanExpiringWarranties(): Promise<{ tenants: number; notic
   return { tenants: result.tenants, notices };
 }
 
+/**
+ * Warns about licences about to renew or lapse, at 30 and 7 days.
+ *
+ * The notice differs by whether it renews itself: an auto-renewing licence is
+ * a bill on its way (is it still needed?), a manual one is a lapse on its way.
+ */
+export async function scanLicenceRenewals(): Promise<{ tenants: number; notices: number }> {
+  let notices = 0;
+  const horizon = Math.max(...NOTICE_THRESHOLDS);
+
+  const result = await eachActiveTenant('licence-renewals', async (tenantId) => {
+    const licences = await LicenceModel.find({
+      status: 'active',
+      expiresAt: { $type: 'date', $gte: new Date(Date.now() - 86_400_000), $lte: new Date(Date.now() + horizon * 86_400_000) },
+    })
+      .select('name expiresAt autoRenew seats seatsUsed')
+      .limit(500)
+      .lean();
+    if (licences.length === 0) return;
+
+    const recipients = await admins(tenantId);
+
+    for (const licence of licences) {
+      const days = daysUntil(licence.expiresAt!);
+      const threshold = NOTICE_THRESHOLDS.find((t) => days <= t);
+      if (threshold === undefined) continue;
+
+      for (const recipient of recipients) {
+        const sent = await notify({
+          recipientId: recipient.membershipId,
+          recipientEmail: recipient.email,
+          type: 'licence.renewal',
+          title: licence.autoRenew
+            ? `${licence.name} renews in ${days} days`
+            : days <= 0
+              ? `${licence.name} has lapsed`
+              : `${licence.name} lapses in ${days} days`,
+          body: licence.autoRenew
+            ? `It renews automatically on ${licence.expiresAt!.toISOString().slice(0, 10)}. ${licence.seatsUsed} of ${licence.seats ?? 'unlimited'} seats are in use — check it is still the right size.`
+            : `It ends on ${licence.expiresAt!.toISOString().slice(0, 10)} and does not renew by itself.`,
+          entityRef: { type: 'licence', id: String(licence._id) },
+          actionUrl: `/licences/${String(licence._id)}`,
+          channels: ['in_app', 'email'],
+          dedupeKey: `licence:${String(licence._id)}:${licence.expiresAt!.toISOString().slice(0, 10)}:${recipient.membershipId}:${threshold}`,
+        });
+        if (sent) notices += 1;
+      }
+    }
+  });
+
+  logger.info({ ...result, notices }, 'Licence renewal scan complete');
+  return { tenants: result.tenants, notices };
+}
+
 interface Recipient {
   membershipId: string;
   email: string | null;
@@ -172,5 +228,6 @@ export async function runNightlyScans(): Promise<void> {
   await reconcileAll({ repair: true });
   await rebuildAllMetrics();
   await scanExpiringWarranties();
+  await scanLicenceRenewals();
   await sweepStorage();
 }

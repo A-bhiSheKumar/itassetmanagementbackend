@@ -16,7 +16,7 @@ import { defineModel, type Scoped } from '../../core/db/index.js';
  */
 
 /** The list screens that support saved views. A closed set, so a typo is a 422. */
-export const SAVED_VIEW_MODULES = ['assets', 'assignments', 'people', 'audit', 'maintenance', 'licences'] as const;
+export const SAVED_VIEW_MODULES = ['assets', 'assignments', 'people', 'audit', 'maintenance', 'licences', 'vendors'] as const;
 export type SavedViewModule = (typeof SAVED_VIEW_MODULES)[number];
 
 const savedViewSchema = new Schema(

@@ -22,6 +22,34 @@ export async function seedSystemRoles(): Promise<Record<string, string>> {
   return Object.fromEntries(created.map((r) => [r.key, String(r._id)]));
 }
 
+/**
+ * Brings this tenant's system roles up to the code's definition.
+ *
+ * System roles are seeded per tenant, so a permission added in a release does
+ * not reach organisations created before it — an Owner would lack a feature
+ * that shipped. Run by `db:sync` on deploy. Custom roles are never touched:
+ * what a customer configured is theirs.
+ */
+export async function syncSystemRolePermissions(): Promise<string[]> {
+  const roles = await RoleModel.find({ isSystem: true }).exec();
+  const changed: string[] = [];
+
+  for (const role of roles) {
+    const definition = SYSTEM_ROLES[role.key as keyof typeof SYSTEM_ROLES];
+    if (!definition) continue;
+
+    const wanted = [...definition.permissions].sort();
+    const current = [...role.permissions].sort();
+    if (wanted.length === current.length && wanted.every((p, i) => p === current[i])) continue;
+
+    role.permissions = wanted;
+    await role.save();
+    changed.push(role.key);
+  }
+
+  return changed;
+}
+
 export function listRoles(): Promise<RoleDocument[]> {
   return RoleModel.find({}).sort({ isSystem: -1, name: 1 }).exec();
 }

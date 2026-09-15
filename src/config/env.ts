@@ -71,6 +71,17 @@ export const envSchema = z.object({
   /** The jobs function to wake after an enqueue, on Lambda. Unset elsewhere. */
   JOBS_FUNCTION_NAME: z.string().optional(),
 
+  /**
+   * Encrypts secrets stored as data — licence keys. 32 random bytes, base64.
+   * Required in production; elsewhere a key is derived from the JWT secret so
+   * development works without another variable. Changing it makes existing
+   * encrypted values unreadable, so it belongs in Secrets Manager, not in code.
+   */
+  DATA_ENCRYPTION_KEY: z
+    .string()
+    .refine((v) => Buffer.from(v, 'base64').length === 32, 'must be 32 bytes, base64-encoded (openssl rand -base64 32)')
+    .optional(),
+
   // --- Email ---------------------------------------------------------------
   /** Absent: mail is recorded, not sent — safe for development and tests. */
   RESEND_API_KEY: z.string().optional(),
@@ -118,6 +129,7 @@ export const envSchema = z.object({
     if (/@resend\.dev>?$/i.test(value.MAIL_FROM)) fail('MAIL_FROM', 'must be an address on your verified sending domain');
     if (!value.APP_URL.startsWith('https://')) fail('APP_URL', 'must be https in production');
     if (value.MAIL_REDIRECT_TO) fail('MAIL_REDIRECT_TO', 'must not be set in production');
+    if (!value.DATA_ENCRYPTION_KEY) fail('DATA_ENCRYPTION_KEY', 'is required in production');
   }
 });
 

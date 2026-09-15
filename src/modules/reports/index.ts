@@ -25,6 +25,7 @@ export {
 } from './reconciliation.service.js';
 export {
   scanExpiringWarranties,
+  scanLicenceRenewals,
   rebuildAllMetrics,
   sweepStorage,
   purgeRecycleBins,

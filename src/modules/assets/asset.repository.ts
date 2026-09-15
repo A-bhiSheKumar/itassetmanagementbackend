@@ -16,6 +16,7 @@ export interface AssetFilters {
   categoryId?: string;
   locationId?: string;
   departmentId?: string;
+  vendorId?: string;
   condition?: string;
   assigneeId?: string;
   /** `true` = unassigned only, `false` = assigned only. */
@@ -67,6 +68,7 @@ export async function buildAssetFilter(filters: AssetFilters): Promise<Record<st
   if (filters.categoryId) filter.categoryId = filters.categoryId;
   if (filters.locationId) filter['placement.locationId'] = filters.locationId;
   if (filters.departmentId) filter['placement.departmentId'] = filters.departmentId;
+  if (filters.vendorId) filter['purchase.vendorId'] = filters.vendorId;
   if (filters.condition) filter.condition = filters.condition;
 
   if (filters.assigneeId) filter['currentAssignment.assigneeId'] = filters.assigneeId;

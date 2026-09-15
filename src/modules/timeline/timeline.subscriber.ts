@@ -20,6 +20,10 @@ export const timelineSubscriber: EventSubscriber = {
     'asset.transferred',
     'asset.transitioned',
     'asset.acknowledged',
+    'asset.maintenance_scheduled',
+    'asset.maintenance_started',
+    'asset.maintenance_completed',
+    'asset.maintenance_cancelled',
   ],
 
   async handle(event: StoredEvent): Promise<void> {

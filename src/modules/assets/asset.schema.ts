@@ -70,6 +70,7 @@ export const listAssetsSchema = {
       categoryId: idSchema.optional(),
       locationId: idSchema.optional(),
       departmentId: idSchema.optional(),
+      vendorId: idSchema.optional(),
       condition: z.string().max(20).optional(),
       assigneeId: idSchema.optional(),
       unassigned: z

@@ -25,6 +25,16 @@ export const PERMISSIONS = {
   'person:update': 'Edit people',
   'person:deactivate': 'Deactivate and offboard people',
 
+  // Suppliers, upkeep and software
+  'vendor:read': 'View vendors',
+  'vendor:manage': 'Add and edit vendors',
+  'maintenance:read': 'View maintenance',
+  'maintenance:manage': 'Schedule and record maintenance',
+  'licence:read': 'View software licences',
+  'licence:manage': 'Manage software licences and seats',
+  // Separate from managing: a licence key is a credential, and seeing one is audited.
+  'licence:reveal': 'Reveal licence keys',
+
   // Members and access
   'member:read': 'View members',
   'member:invite': 'Invite members',
@@ -96,6 +106,10 @@ export const SYSTEM_ROLES = {
       'person:update',
       'member:read',
       'export:run',
+      'vendor:read',
+      'maintenance:read',
+      'maintenance:manage',
+      'licence:read',
     ] as Permission[],
   },
   member: {

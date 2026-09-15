@@ -4,6 +4,8 @@ import { PersonModel, ORG_UNIT_MODELS, restorePerson, restoreOrgUnit } from '../
 import { DocumentModel, restoreDocument, purgeDeletedDocuments } from '../documents/index.js';
 import { userDirectory } from '../memberships/index.js';
 import { writeAuditRecord } from '../auditlog/index.js';
+import { VendorModel, restoreVendor } from '../vendors/index.js';
+import { LicenceModel } from '../licences/index.js';
 import { AppError, ErrorCode, NotFoundError } from '../../core/errors/index.js';
 
 /**
@@ -17,7 +19,7 @@ import { AppError, ErrorCode, NotFoundError } from '../../core/errors/index.js';
 
 export const RECYCLE_WINDOW_MS = 24 * 60 * 60_000;
 
-export const BIN_TYPES = ['asset', 'person', 'location', 'department', 'document'] as const;
+export const BIN_TYPES = ['asset', 'person', 'location', 'department', 'document', 'vendor', 'licence'] as const;
 export type BinType = (typeof BIN_TYPES)[number];
 
 /** Who may see and restore each kind — the same permission that allowed deleting it. */
@@ -27,6 +29,8 @@ export const BIN_PERMISSION: Record<BinType, string> = {
   location: 'settings:manage',
   department: 'settings:manage',
   document: 'asset:update',
+  vendor: 'vendor:manage',
+  licence: 'licence:manage',
 };
 
 export interface BinItem {
@@ -85,6 +89,14 @@ const LOADERS: Record<BinType, () => Promise<Array<Omit<BinItem, 'deletedByName'
     const rows = await deleted(ORG_UNIT_MODELS.department as never, 'name code');
     return rows.map((r) => ({ type: 'department', id: String(r._id), name: String(r.name), detail: String(r.code ?? ''), deletedAt: r.deletedAt, deletedBy: r.deletedBy }));
   },
+  async vendor() {
+    const rows = await deleted(VendorModel as never, 'name contactName');
+    return rows.map((r) => ({ type: 'vendor', id: String(r._id), name: String(r.name), detail: String(r.contactName ?? ''), deletedAt: r.deletedAt, deletedBy: r.deletedBy }));
+  },
+  async licence() {
+    const rows = await deleted(LicenceModel as never, 'name type');
+    return rows.map((r) => ({ type: 'licence', id: String(r._id), name: String(r.name), detail: String(r.type), deletedAt: r.deletedAt, deletedBy: r.deletedBy }));
+  },
   async document() {
     // Abandoned uploads are soft-deleted by the storage sweep, not by a person,
     // and were never files anyone could see. They are not in the bin.
@@ -122,6 +134,8 @@ const MODELS: Record<BinType, Model<unknown>> = {
   location: ORG_UNIT_MODELS.location as never,
   department: ORG_UNIT_MODELS.department as never,
   document: DocumentModel as never,
+  vendor: VendorModel as never,
+  licence: LicenceModel as never,
 };
 
 /**
@@ -142,6 +156,8 @@ export async function restoreItem(type: BinType, id: string): Promise<{ type: Bi
   if (type === 'asset') await restoreAsset(id);
   else if (type === 'person') await restorePerson(id);
   else if (type === 'location' || type === 'department') await restoreOrgUnit(type, id);
+  else if (type === 'vendor') await restoreVendor(id);
+  else if (type === 'licence') await (await LicenceModel.findOne({ _id: id, deletedAt: { $ne: null } }).exec())!.restore();
   else await restoreDocument(id);
 
   return { type, id };
@@ -158,11 +174,13 @@ export async function purgeExpired(): Promise<Record<BinType, number>> {
   const before = cutoff();
   const filter = { deletedAt: { $lt: before } };
 
-  const [asset, person, location, department] = await Promise.all([
+  const [asset, person, location, department, vendor, licence] = await Promise.all([
     AssetModel.deleteMany(filter),
     PersonModel.deleteMany(filter),
     ORG_UNIT_MODELS.location.deleteMany(filter as never),
     ORG_UNIT_MODELS.department.deleteMany(filter as never),
+    VendorModel.deleteMany(filter),
+    LicenceModel.deleteMany(filter),
   ]);
   const document = await purgeDeletedDocuments(before);
 
@@ -172,6 +190,8 @@ export async function purgeExpired(): Promise<Record<BinType, number>> {
     location: location.deletedCount,
     department: department.deletedCount,
     document,
+    vendor: vendor.deletedCount,
+    licence: licence.deletedCount,
   };
 
   if (Object.values(counts).some((n) => n > 0)) {
