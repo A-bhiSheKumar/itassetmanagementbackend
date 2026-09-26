@@ -12,5 +12,6 @@ export {
   changePassword,
   sendPasswordReset,
   resetPassword,
+  setOnboardingState,
 } from './identity.service.js';
 export { authRoutes, meRoutes } from './auth.routes.js';

@@ -57,6 +57,14 @@ export const invitationPreviewSchema = {
   body: strictObject({ token: z.string().min(20).max(200) }),
 };
 
+export const onboardingSchema = {
+  body: strictObject({
+    tour: z.enum(['completed', 'skipped', 'reset']).optional(),
+    /** A single hint, by id. */
+    dismiss: z.string().trim().max(60).optional(),
+  }).refine((b) => b.tour !== undefined || b.dismiss !== undefined, 'Say what to record.'),
+};
+
 export const changePasswordSchema = {
   body: strictObject({
     currentPassword: z.string().min(1, 'Enter your current password.'),

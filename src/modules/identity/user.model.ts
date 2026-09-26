@@ -52,6 +52,20 @@ const userSchema = markSchemaGlobal(
         select: false,
       },
 
+      /**
+       * What this person has already been shown.
+       *
+       * On the user rather than the membership: somebody who belongs to three
+       * organisations has learnt the product once, and walking them through it
+       * again in each is an insult, not onboarding.
+       */
+      onboarding: {
+        tourCompletedAt: { type: Date, default: null },
+        tourSkippedAt: { type: Date, default: null },
+        /** Individual hints dismissed, by id, so a new one can appear without resetting the rest. */
+        dismissed: { type: [String], default: [] },
+      },
+
       lastLoginAt: { type: Date, default: null },
       failedLoginCount: { type: Number, default: 0 },
       lockedUntil: { type: Date, default: null },

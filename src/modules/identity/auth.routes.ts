@@ -13,6 +13,7 @@ import {
   forgotPassword,
   completePasswordReset,
   me,
+  updateOnboarding,
   updatePassword,
 } from './auth.controller.js';
 import {
@@ -21,6 +22,7 @@ import {
   selectTenantSchema,
   acceptInvitationSchema,
   changePasswordSchema,
+  onboardingSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   invitationPreviewSchema,
@@ -67,6 +69,8 @@ authRoutes.post(
 export const meRoutes = Router();
 
 meRoutes.get('/', requireAuth(), asyncHandler(me));
+meRoutes.post('/onboarding', requireAuth(), validate(onboardingSchema), asyncHandler(updateOnboarding));
+
 meRoutes.post(
   '/change-password',
   requireAuth(),

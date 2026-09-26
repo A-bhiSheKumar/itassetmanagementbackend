@@ -34,6 +34,7 @@ import {
   changePassword,
   findUserByEmail,
   resetPassword,
+  setOnboardingState,
 } from './identity.service.js';
 
 function setRefreshCookie(res: Response, token: string): void {
@@ -369,6 +370,11 @@ export async function me(_req: Request, res: Response): Promise<void> {
       name: user.name,
       emailVerified: user.emailVerifiedAt !== null,
     },
+    onboarding: {
+      tourCompletedAt: user.onboarding?.tourCompletedAt ?? null,
+      tourSkippedAt: user.onboarding?.tourSkippedAt ?? null,
+      dismissed: user.onboarding?.dismissed ?? [],
+    },
     tenant: current
       ? {
           id: String(current._id),
@@ -387,6 +393,12 @@ export async function me(_req: Request, res: Response): Promise<void> {
     // every one of them is checked server-side on the actual request.
     permissions,
   });
+}
+
+/** Records that the walkthrough was finished, skipped, or should run again. */
+export async function updateOnboarding(req: Request, res: Response): Promise<void> {
+  const ctx = getContextOrThrow();
+  ok(res, await setOnboardingState(ctx.userId!, req.body as { tour?: 'completed' | 'skipped' | 'reset'; dismiss?: string }));
 }
 
 export async function updatePassword(req: Request, res: Response): Promise<void> {

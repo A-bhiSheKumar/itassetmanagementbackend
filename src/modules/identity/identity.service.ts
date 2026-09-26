@@ -212,6 +212,41 @@ export async function changePassword(
   await sendPasswordChangedNotice(user);
 }
 
+/**
+ * Records what someone has been shown, or asks for it again.
+ *
+ * Small and deliberately not a general key-value store: preferences that
+ * nothing reads accumulate forever, and each of these is read by a specific
+ * part of the interface.
+ */
+export async function setOnboardingState(
+  userId: string,
+  input: { tour?: 'completed' | 'skipped' | 'reset'; dismiss?: string },
+): Promise<{ tourCompletedAt: Date | null; tourSkippedAt: Date | null; dismissed: string[] }> {
+  const user = await UserModel.findById(userId).exec();
+  if (!user) throw new UnauthenticatedError();
+
+  const now = new Date();
+  if (input.tour === 'completed') user.set('onboarding.tourCompletedAt', now);
+  if (input.tour === 'skipped') user.set('onboarding.tourSkippedAt', now);
+  if (input.tour === 'reset') {
+    user.set('onboarding.tourCompletedAt', null);
+    user.set('onboarding.tourSkippedAt', null);
+  }
+  if (input.dismiss) {
+    const dismissed = new Set<string>([...(user.onboarding?.dismissed ?? []), input.dismiss]);
+    user.set('onboarding.dismissed', [...dismissed].slice(-100));
+  }
+
+  await user.save();
+
+  return {
+    tourCompletedAt: user.onboarding?.tourCompletedAt ?? null,
+    tourSkippedAt: user.onboarding?.tourSkippedAt ?? null,
+    dismissed: user.onboarding?.dismissed ?? [],
+  };
+}
+
 // ── Password reset ──────────────────────────────────────────────────────────
 
 export const RESET_TTL_MINUTES = 60;

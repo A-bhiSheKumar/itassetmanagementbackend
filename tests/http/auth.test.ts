@@ -440,3 +440,37 @@ describe('permission changes take effect immediately', () => {
     expect(after.status).toBe(401);
   });
 });
+
+describe('what someone has already been shown', () => {
+  it('starts empty, remembers the walkthrough, and can be asked for again', async () => {
+    const owner = await seedTenant(server(), 'onboarding');
+    const as = (req: request.Test) => req.set('Authorization', `Bearer ${owner.accessToken}`);
+
+    const fresh = await as(request(server()).get('/api/v1/me')).expect(200);
+    expect(fresh.body.data.onboarding).toMatchObject({ tourCompletedAt: null, tourSkippedAt: null, dismissed: [] });
+
+    await as(request(server()).post('/api/v1/me/onboarding').send({ tour: 'completed', dismiss: 'assets-intro' })).expect(200);
+
+    const seen = await as(request(server()).get('/api/v1/me'));
+    expect(seen.body.data.onboarding.tourCompletedAt).toBeTruthy();
+    expect(seen.body.data.onboarding.dismissed).toEqual(['assets-intro']);
+
+    // The same hint twice does not accumulate.
+    await as(request(server()).post('/api/v1/me/onboarding').send({ dismiss: 'assets-intro' })).expect(200);
+    const again = await as(request(server()).get('/api/v1/me'));
+    expect(again.body.data.onboarding.dismissed).toEqual(['assets-intro']);
+
+    await as(request(server()).post('/api/v1/me/onboarding').send({ tour: 'reset' })).expect(200);
+    const reset = await as(request(server()).get('/api/v1/me'));
+    expect(reset.body.data.onboarding.tourCompletedAt).toBeNull();
+  });
+
+  it('refuses a request that records nothing', async () => {
+    const owner = await seedTenant(server(), 'onboarding-empty');
+    const res = await request(server())
+      .post('/api/v1/me/onboarding')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({});
+    expect(res.status).toBe(422);
+  });
+});
