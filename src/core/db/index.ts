@@ -21,4 +21,5 @@ export {
   type TenantScopeOptions,
 } from './plugins/tenantScope.plugin.js';
 export { softDeletePlugin } from './plugins/softDelete.plugin.js';
+export { queryTimeoutPlugin } from './plugins/queryTimeout.plugin.js';
 export { auditFieldsPlugin } from './plugins/auditFields.plugin.js';

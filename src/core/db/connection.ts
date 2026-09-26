@@ -3,6 +3,7 @@ import { env, isTest, isProduction, isLambda } from '../../config/index.js';
 import { logger } from '../logging/index.js';
 import { tenantScopePlugin } from './plugins/tenantScope.plugin.js';
 import { softDeletePlugin } from './plugins/softDelete.plugin.js';
+import { queryTimeoutPlugin } from './plugins/queryTimeout.plugin.js';
 import { auditFieldsPlugin } from './plugins/auditFields.plugin.js';
 
 /**
@@ -41,6 +42,9 @@ export function registerGlobalPlugins(): void {
   mongoose.plugin(tenantScopePlugin);
   mongoose.plugin(softDeletePlugin);
   mongoose.plugin(auditFieldsPlugin);
+  // Last: a ceiling on reads, so a query that goes wrong is abandoned by the
+  // database rather than holding the request open until something else times out.
+  mongoose.plugin(queryTimeoutPlugin);
 
   mongoose.set('strictQuery', true);
   // Reject unknown keys in updates rather than silently dropping them.

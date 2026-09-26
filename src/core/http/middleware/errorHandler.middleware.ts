@@ -73,6 +73,45 @@ function translate(err: unknown): AppError {
     });
   }
 
+  /*
+   * The database itself is in trouble: unreachable, or a read that hit its
+   * ceiling. Both are ours to fix and both are worth retrying, so they are 503
+   * with an honest message rather than a 500 that says "something went wrong"
+   * about a condition we can name.
+   */
+  /*
+   * By NAME, not instanceof: these classes come from the mongodb driver, and an
+   * error raised by a second copy of it (a direct dependency alongside
+   * mongoose's own) fails an instanceof check while being exactly the same
+   * condition. Names are stable across copies.
+   */
+  const failureName = (err as { name?: string })?.name ?? '';
+  if (['MongoServerSelectionError', 'MongoNetworkError', 'MongoNetworkTimeoutError', 'MongoNotConnectedError', 'MongoTopologyClosedError'].includes(failureName)) {
+    return new AppError(503, ErrorCode.SERVICE_UNAVAILABLE, 'The service is briefly unavailable. Please try again in a moment.', {
+      cause: err,
+      expected: false,
+    });
+  }
+
+  // MaxTimeMSExpired / ExceededTimeLimit — see plugins/queryTimeout.plugin.ts.
+  if ((err as { code?: number })?.code === 50 || (err as { codeName?: string })?.codeName === 'MaxTimeMSExpired') {
+    return new AppError(503, ErrorCode.SERVICE_UNAVAILABLE, 'That took too long and was stopped. Try narrowing what you asked for.', {
+      cause: err,
+      expected: false,
+    });
+  }
+
+  /*
+   * Two transactions touched the same records at the same moment and the
+   * driver's own retries did not clear it. Nothing was written, and trying
+   * again almost always succeeds — which is what the message should say.
+   */
+  if ((err as { code?: number })?.code === 112 || (err as { codeName?: string })?.codeName === 'WriteConflict') {
+    return new AppError(409, ErrorCode.RESOURCE_IN_USE, 'Somebody else changed this at the same moment. Nothing was saved — please try again.', {
+      cause: err,
+    });
+  }
+
   // E11000. The partial unique index on active assignments surfaces here too —
   // the assignment service catches it first and raises AssetAlreadyAssignedError,
   // which is why that case carries a useful message and this one is generic.
