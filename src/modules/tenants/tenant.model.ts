@@ -32,6 +32,36 @@ const tenantSchema = markSchemaGlobal(
         locale: { type: String, default: 'en-GB' },
         currency: { type: String, default: 'GBP' },
         assetTagPrefix: { type: String, default: 'AST' },
+
+        /**
+         * Which kind of estate this organisation tracks. Decides the starter
+         * catalogue at signup and nothing else afterwards — it is a label, not
+         * a code path (see catalog/industry.ts).
+         */
+        industry: { type: String, default: 'it' },
+
+        /**
+         * What the product calls things here. An organisation tracking vans
+         * should read "vehicle" everywhere, not "asset"; the alternative is a
+         * product that always sounds like it was built for somebody else.
+         */
+        vocabulary: {
+          asset: { type: String, default: 'asset' },
+          assets: { type: String, default: 'assets' },
+          person: { type: String, default: 'person' },
+          people: { type: String, default: 'people' },
+        },
+
+        /**
+         * Sections switched off for this organisation. Presentation only —
+         * permissions still decide access — so turning one off never orphans
+         * data that is already there.
+         */
+        modules: {
+          maintenance: { type: Boolean, default: true },
+          licences: { type: Boolean, default: true },
+          vendors: { type: Boolean, default: true },
+        },
         /** Enterprise tenants can refuse support impersonation entirely. */
         allowImpersonation: { type: Boolean, default: true },
       },

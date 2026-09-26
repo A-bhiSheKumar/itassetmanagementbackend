@@ -19,6 +19,8 @@ export const registerSchema = {
     password: passwordSchema,
     name: z.string().trim().min(1, 'Enter your name.').max(120),
     organisationName: z.string().trim().min(1, 'Enter your organisation name.').max(120),
+    /** Which starter setup to seed — see catalog/industry.ts. Optional; IT by default. */
+    industry: z.string().trim().max(40).optional(),
   }),
 };
 

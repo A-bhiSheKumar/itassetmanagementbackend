@@ -2,7 +2,7 @@ import { patchContext } from '../../core/context/index.js';
 import { DuplicateValueError, NotFoundError } from '../../core/errors/index.js';
 import { seedSystemRoles } from '../roles/index.js';
 import { startTrial } from '../subscriptions/index.js';
-import { seedCatalog } from '../catalog/index.js';
+import { seedCatalog, findPreset, DEFAULT_INDUSTRY } from '../catalog/index.js';
 import { TenantModel, type TenantDocument } from './tenant.model.js';
 
 const RESERVED_SLUGS = new Set([
@@ -38,7 +38,10 @@ export async function createTenant(input: {
   name: string;
   slug?: string;
   ownerUserId: string;
+  /** Which starter setup to seed. See catalog/industry.ts. */
+  industry?: string;
 }): Promise<TenantDocument> {
+  const preset = findPreset(input.industry ?? DEFAULT_INDUSTRY);
   const slug = input.slug ?? (await uniqueSlug(slugify(input.name)));
 
   if (!(await isSlugAvailable(slug))) {
@@ -51,6 +54,12 @@ export async function createTenant(input: {
     ownerUserId: input.ownerUserId,
     status: 'trialing',
     trialEndsAt: new Date(Date.now() + 14 * 86_400_000),
+    settings: {
+      industry: preset.key,
+      // What this organisation calls its things, from the first screen on.
+      vocabulary: preset.vocabulary,
+      modules: preset.modules,
+    },
   });
 
   // Everything below is tenant-scoped and needs the context to exist.
@@ -60,7 +69,7 @@ export async function createTenant(input: {
   await startTrial('starter');
   // Categories, asset types and the default lifecycle. A tenant that opens to
   // an empty screen has to invent a taxonomy before adding anything.
-  await seedCatalog();
+  await seedCatalog(preset.key);
 
   return tenant;
 }

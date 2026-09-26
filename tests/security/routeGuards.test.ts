@@ -56,6 +56,9 @@ describe('route guards', () => {
       'GET /api/v1/health/metrics',
       'GET /api/v1/health/ready',
       'GET /api/v1/health/summary',
+      // Which starter setups exist. Static reference data, asked for by the
+      // signup screen before anyone has an account.
+      'GET /api/v1/tenant/industries',
       // Receipt confirmation. Whoever confirms usually has no login; the
       // single-use token emailed to them is the credential, and the endpoint
       // is rate limited like every other credential endpoint.

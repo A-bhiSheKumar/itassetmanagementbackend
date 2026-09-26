@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import { strictObject } from '../../core/validation/index.js';
+import { INDUSTRY_KEYS } from '../catalog/index.js';
+
+export const applyPresetSchema = {
+  body: strictObject({
+    industry: z.enum(INDUSTRY_KEYS as [string, ...string[]]),
+    /** Also rename things and switch sections to match the preset. */
+    adoptWording: z.boolean().optional(),
+  }),
+};
 
 export const updateTenantSchema = {
   body: strictObject({
@@ -28,6 +37,18 @@ export const updateTenantSchema = {
         .regex(/^[A-Z0-9-]+$/i, 'Letters, numbers and hyphens only.')
         .optional(),
       allowImpersonation: z.boolean().optional(),
+      industry: z.enum(INDUSTRY_KEYS as [string, ...string[]]).optional(),
+      vocabulary: strictObject({
+        asset: z.string().trim().min(1).max(24),
+        assets: z.string().trim().min(1).max(24),
+        person: z.string().trim().min(1).max(24),
+        people: z.string().trim().min(1).max(24),
+      }).optional(),
+      modules: strictObject({
+        maintenance: z.boolean(),
+        licences: z.boolean(),
+        vendors: z.boolean(),
+      }).optional(),
     }).optional(),
   }),
 };

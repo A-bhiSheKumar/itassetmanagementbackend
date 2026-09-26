@@ -46,4 +46,13 @@ export {
   type TransitionContext,
 } from './lifecycle.service.js';
 export { catalogRoutes } from './catalog.routes.js';
-export { seedCatalog } from './catalog.service.js';
+export { seedCatalog, applyPreset } from './catalog.service.js';
+export {
+  INDUSTRY_PRESETS,
+  INDUSTRY_KEYS,
+  DEFAULT_INDUSTRY,
+  findPreset,
+  type IndustryPreset,
+  type Vocabulary,
+  type ModuleSwitches,
+} from './industry.js';

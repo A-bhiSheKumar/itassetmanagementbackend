@@ -12,6 +12,7 @@ import {
 } from '../../core/auth/index.js';
 import { isProduction } from '../../config/index.js';
 import { createTenant, findTenantById } from '../tenants/index.js';
+import { DEFAULT_INDUSTRY, findPreset } from '../catalog/index.js';
 import {
   createOwnerMembership,
   findMembership,
@@ -50,11 +51,12 @@ function requestMeta(req: Request) {
  * an organisation with no owner — is not reachable.
  */
 export async function register(req: Request, res: Response): Promise<void> {
-  const { email, password, name, organisationName } = req.body as {
+  const { email, password, name, organisationName, industry } = req.body as {
     email: string;
     password: string;
     name: string;
     organisationName: string;
+    industry?: string;
   };
 
   const user = await createUser({ email, password, name });
@@ -62,7 +64,7 @@ export async function register(req: Request, res: Response): Promise<void> {
 
   patchContext({ userId });
 
-  const tenant = await createTenant({ name: organisationName, ownerUserId: userId });
+  const tenant = await createTenant({ name: organisationName, ownerUserId: userId, industry });
   const membership = await createOwnerMembership(userId);
   await incrementUsage('seats');
 
@@ -353,6 +355,13 @@ export async function me(_req: Request, res: Response): Promise<void> {
     if (membership) permissions = [...(await permissionsForMembership(membership))];
   }
 
+  /*
+   * The current organisation's own settings travel with the session: the whole
+   * interface is worded from `vocabulary`, and hiding a section it does not use
+   * cannot wait for a second round trip after every page load.
+   */
+  const current = ctx.tenantId ? await findTenantById(ctx.tenantId) : null;
+
   ok(res, {
     user: {
       id: String(user._id),
@@ -360,6 +369,18 @@ export async function me(_req: Request, res: Response): Promise<void> {
       name: user.name,
       emailVerified: user.emailVerifiedAt !== null,
     },
+    tenant: current
+      ? {
+          id: String(current._id),
+          name: current.name,
+          industry: current.settings?.industry ?? DEFAULT_INDUSTRY,
+          vocabulary: current.settings?.vocabulary ?? findPreset(null).vocabulary,
+          modules: current.settings?.modules ?? findPreset(null).modules,
+          currency: current.settings?.currency ?? 'GBP',
+          timezone: current.settings?.timezone ?? 'Europe/London',
+          assetTagPrefix: current.settings?.assetTagPrefix ?? 'AST',
+        }
+      : null,
     organisations,
     currentTenantId: ctx.tenantId ?? null,
     // The frontend uses these to hide unusable controls. It is a convenience:

@@ -7,52 +7,95 @@ import { seedDefaultWorkflow } from './lifecycle.service.js';
 import { createDefinition, setDefinitionStatus } from './customField.service.js';
 import { slugifyFieldKey } from './customField.service.js';
 import type { CustomFieldType } from './customFieldValues.js';
+import { DEFAULT_INDUSTRY, findPreset } from './industry.js';
 
 /**
- * Starter catalogue, seeded on tenant creation.
+ * Starter catalogue, seeded on tenant creation from the chosen industry preset.
  *
  * A new organisation that opens to an empty screen has to invent a taxonomy
- * before it can add anything. These are the categories and types almost every
- * IT estate has; anything unusual they add themselves.
+ * before it can add anything, so it starts with the categories, types and
+ * fields its industry almost always has — and can rename or archive every one
+ * of them. Presets live in industry.ts; nothing here is specific to IT.
  */
-const STARTER_CATEGORIES = [
-  { name: 'Computers', icon: 'laptop' },
-  { name: 'Displays', icon: 'monitor' },
-  { name: 'Mobile devices', icon: 'phone' },
-  { name: 'Networking', icon: 'router' },
-  { name: 'Peripherals', icon: 'keyboard' },
-  { name: 'Software', icon: 'app' },
-] as const;
-
-const STARTER_TYPES = [
-  { key: 'laptop', name: 'Laptop', category: 'Computers', tagPrefix: 'LAP', requiresSerial: true },
-  { key: 'desktop', name: 'Desktop', category: 'Computers', tagPrefix: 'DSK', requiresSerial: true },
-  { key: 'monitor', name: 'Monitor', category: 'Displays', tagPrefix: 'MON', requiresSerial: false },
-  { key: 'phone', name: 'Mobile phone', category: 'Mobile devices', tagPrefix: 'MOB', requiresSerial: true },
-  { key: 'accessory', name: 'Accessory', category: 'Peripherals', tagPrefix: 'ACC', requiresSerial: false },
-] as const;
-
-export async function seedCatalog(): Promise<void> {
+export async function seedCatalog(industry: string = DEFAULT_INDUSTRY): Promise<void> {
   const existing = await AssetTypeModel.countDocuments({});
   if (existing > 0) return;
 
+  // The workflow is seeded even for the blank preset: an asset with no
+  // lifecycle cannot be created at all.
+  await seedDefaultWorkflow();
+  await applyPreset(industry);
+}
+
+/**
+ * Adds a preset's categories, types and fields, skipping anything already
+ * there by name.
+ *
+ * Idempotent, so it is safe to offer as "add the starter setup for my
+ * industry" long after signup — an organisation that started blank, or that
+ * has grown into a second kind of estate, gets the additions without losing or
+ * duplicating what it already has.
+ */
+export async function applyPreset(industry: string): Promise<{
+  preset: string;
+  categories: number;
+  types: number;
+  fields: number;
+}> {
+  const preset = findPreset(industry);
   const workflow = await seedDefaultWorkflow();
 
-  const categories = await AssetCategoryModel.insertMany(
-    STARTER_CATEGORIES.map((c) => ({ name: c.name, icon: c.icon })),
-  );
-  const categoryByName = new Map(categories.map((c) => [c.name, String(c._id)]));
+  const existingCategories = await AssetCategoryModel.find({}).select('name').lean();
+  const categoryByName = new Map(existingCategories.map((c) => [c.name.toLowerCase(), String(c._id)]));
 
-  await AssetTypeModel.insertMany(
-    STARTER_TYPES.map((t) => ({
-      key: t.key,
-      name: t.name,
-      categoryId: categoryByName.get(t.category) ?? null,
+  let categories = 0;
+  for (const category of preset.categories) {
+    if (categoryByName.has(category.name.toLowerCase())) continue;
+    const created = await AssetCategoryModel.create({ name: category.name, icon: category.icon ?? null });
+    categoryByName.set(category.name.toLowerCase(), String(created._id));
+    categories += 1;
+  }
+
+  const existingTypes = await AssetTypeModel.find({}).select('name').lean();
+  const typeByName = new Map(existingTypes.map((t) => [t.name.toLowerCase(), String(t._id)]));
+
+  let types = 0;
+  for (const type of preset.types) {
+    if (typeByName.has(type.name.toLowerCase())) continue;
+    const created = await AssetTypeModel.create({
+      key: slugifyFieldKey(type.name),
+      name: type.name,
+      categoryId: categoryByName.get(type.category.toLowerCase()) ?? null,
       lifecycleWorkflowId: String(workflow._id),
-      tagPrefix: t.tagPrefix,
-      requiresSerial: t.requiresSerial,
-    })),
-  );
+      tagPrefix: type.tagPrefix,
+      requiresSerial: type.requiresSerial,
+    });
+    typeByName.set(type.name.toLowerCase(), String(created._id));
+    types += 1;
+  }
+
+  const existingFields = await CustomFieldDefinitionModel.find({}).select('label appliesTo').lean();
+  const hasField = new Set(existingFields.map((f) => `${f.appliesTo}:${f.label.toLowerCase()}`));
+
+  let fields = 0;
+  for (const field of preset.fields) {
+    if (hasField.has(`${field.appliesTo}:${field.label.toLowerCase()}`)) continue;
+    await createDefinition({
+      appliesTo: field.appliesTo,
+      label: field.label,
+      type: field.type,
+      // Named types, resolved to ids here: a preset cannot know them.
+      assetTypeIds: (field.forTypes ?? [])
+        .map((name) => typeByName.get(name.toLowerCase()))
+        .filter((id): id is string => Boolean(id)),
+      options: (field.options ?? []).map((label) => ({ label })),
+      display: { showInTable: field.showInTable ?? false },
+      ...(field.required ? { validation: { required: true } } : {}),
+    });
+    fields += 1;
+  }
+
+  return { preset: preset.key, categories, types, fields };
 }
 
 export function listAssetTypes(): Promise<AssetTypeDocument[]> {
