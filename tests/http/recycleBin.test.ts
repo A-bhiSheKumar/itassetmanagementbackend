@@ -150,7 +150,8 @@ describe('deleted files', () => {
       const remainingAssets = await AssetModel.countDocuments({ deletedAt: { $ne: null } });
       const remainingDocs = await DocumentModel.countDocuments({ deletedAt: { $ne: null } });
       const audit = await AuditLogModel.countDocuments({ action: 'recycle_bin.purged' });
-      return { result, remainingAssets, remainingDocs, audit, before, after };
+      const auditEntityId = (await AuditLogModel.findOne({ action: 'recycle_bin.purged' }).lean())?.entityId;
+      return { result, remainingAssets, remainingDocs, audit, auditEntityId, before, after };
     });
 
     expect(counts.result).toMatchObject({ asset: 1, document: 1 });
@@ -158,6 +159,9 @@ describe('deleted files', () => {
     expect(counts.remainingAssets).toBe(1);
     expect(counts.remainingDocs).toBe(0);
     expect(counts.audit).toBe(1);
+    // The organisation is the subject: an audit row with no subject at all
+    // cannot be filtered to, and used to break the audit screen outright.
+    expect(counts.auditEntityId).toBe(t.tenantId);
     // The file really stayed while it was in the bin, and really went with the purge.
     expect(counts.before).not.toBeNull();
     expect(counts.after).toBeNull();

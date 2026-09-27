@@ -1,4 +1,5 @@
 import type { Model } from 'mongoose';
+import { getContext } from '../../core/context/index.js';
 import { AssetModel, restoreAsset } from '../assets/index.js';
 import { PersonModel, ORG_UNIT_MODELS, restorePerson, restoreOrgUnit } from '../people/index.js';
 import { DocumentModel, restoreDocument, purgeDeletedDocuments } from '../documents/index.js';
@@ -195,7 +196,14 @@ export async function purgeExpired(): Promise<Record<BinType, number>> {
   };
 
   if (Object.values(counts).some((n) => n > 0)) {
-    await writeAuditRecord({ action: 'recycle_bin.purged', entityType: 'tenant', metadata: { counts, deletedBefore: before } });
+    await writeAuditRecord({
+      action: 'recycle_bin.purged',
+      entityType: 'tenant',
+      // The organisation itself is the subject: an audit row with no subject at
+      // all cannot be filtered to, or linked from.
+      entityId: getContext()?.tenantId ?? null,
+      metadata: { counts, deletedBefore: before },
+    });
   }
 
   return counts;
